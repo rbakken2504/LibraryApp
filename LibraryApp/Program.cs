@@ -1,0 +1,104 @@
+using System.ClientModel;
+using System.ClientModel.Primitives;
+using BookSearchService.Api;
+using BookSearchService.Api.Caching;
+using BookSearchService.Application;
+using BookSearchService.Application.Abstractions;
+using BookSearchService.Infrastructure.Gemini;
+using BookSearchService.Infrastructure.OpenLibrary;
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Options;
+using OpenAI;
+
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddControllers();
+builder.Services.AddOpenApi();
+builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<SearchUnavailableExceptionHandler>();
+
+builder.Services.AddOptions<GeminiOptions>()
+    .Bind(builder.Configuration.GetSection(GeminiOptions.SectionName))
+    .Validate(o => !string.IsNullOrWhiteSpace(o.ApiKey),
+        "Gemini:ApiKey is not configured. Set it with: dotnet user-secrets set \"Gemini:ApiKey\" \"<key>\"")
+    .ValidateOnStart();
+
+builder.Services.AddOptions<OpenLibraryOptions>()
+    .Bind(builder.Configuration.GetSection(OpenLibraryOptions.SectionName));
+
+var openLibraryOptions = builder.Configuration
+    .GetSection(OpenLibraryOptions.SectionName)
+    .Get<OpenLibraryOptions>() ?? new OpenLibraryOptions();
+
+// --- Output caching -------------------------------------------------------------------
+// Order matters: NormalizedQueryCachePolicy has to come last so it can override the QueryKeys="*"
+// that the built-in default policy sets. See that class for why. Do not add SetVaryByQuery("q")
+// here either — it would put the verbatim query back into the key and defeat the normalization.
+//
+// Single-instance scope: this uses the default in-memory store, so the cache is per-process,
+// lost on restart, and bounded at 100 MB. The 7-day expiry is therefore "7 days or until the
+// process recycles". Fine as it stands; in production this would be a Redis-backed
+// IOutputCacheStore so entries are durable and shared by every instance. That swap is a DI
+// registration only — the key derivation in QueryNormalizer is independent of where it is stored.
+//
+// Worth knowing before making that change: AllowLocking is per-process. A distributed store does
+// not give you a distributed lock, so N instances can still each make one upstream call for the
+// same cold key. Closing that needs an explicit distributed lock, not just Redis.
+builder.Services.AddOutputCache(opts =>
+{
+    opts.AddPolicy("BookSearchCache", policy => policy
+        .Expire(TimeSpan.FromDays(7))
+        .AddPolicy<NormalizedQueryCachePolicy>());
+});
+
+// --- Gemini ---------------------------------------------------------------------------
+builder.Services.AddSingleton<IChatClient>(sp =>
+{
+    var options = sp.GetRequiredService<IOptions<GeminiOptions>>().Value;
+
+    var clientOptions = new OpenAIClientOptions
+    {
+        Endpoint = new Uri(options.Endpoint),
+        // One retry with exponential backoff, then fail — no silent degradation.
+        RetryPolicy = new ClientRetryPolicy(maxRetries: 1),
+        NetworkTimeout = TimeSpan.FromSeconds(10)
+    };
+
+    return new OpenAIClient(new ApiKeyCredential(options.ApiKey), clientOptions)
+        .GetChatClient(options.Model)
+        .AsIChatClient();
+});
+
+builder.Services.AddScoped<ISearchIntentParser, GeminiSearchIntentParser>();
+
+// --- OpenLibrary ----------------------------------------------------------------------
+builder.Services.AddHttpClient<IBookCatalog, OpenLibraryBookCatalog>(client =>
+    {
+        client.BaseAddress = new Uri(openLibraryOptions.BaseAddress);
+    })
+    .AddStandardResilienceHandler(resilience =>
+    {
+        // OpenLibrary answers a well-formed fielded query in ~3.5s but has been measured at ~18s on
+        // awkward ones. A bounded per-attempt timeout plus a single retry keeps the worst case finite.
+        resilience.AttemptTimeout.Timeout = openLibraryOptions.Timeout;
+        resilience.Retry.MaxRetryAttempts = 1;
+        resilience.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(30);
+        resilience.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(30);
+    });
+
+builder.Services.AddScoped<BookSearchOrchestrator>();
+
+var app = builder.Build();
+
+app.UseExceptionHandler();
+
+if (app.Environment.IsDevelopment())
+{
+    app.MapOpenApi();
+}
+
+app.UseHttpsRedirection();
+app.UseOutputCache();
+app.MapControllers();
+
+app.Run();

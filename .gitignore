@@ -1,0 +1,8 @@
+bin/
+obj/
+/packages/
+riderModule.iml
+/_ReSharper.Caches/
+
+# Local launch config: ports and ASPNETCORE_ENVIRONMENT differ per machine.
+launchSettings.json
