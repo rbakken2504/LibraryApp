@@ -22,7 +22,6 @@ GET /api/books/search?q=dune by frank herbert
       "authors": ["Frank Herbert", "Френк Герберт"],
       "firstPublishYear": 1965,
       "coverUrl": "https://covers.openlibrary.org/b/id/11481354-M.jpg",
-      "editionCount": 160,
       "tier": "ExactTitlePrimaryAuthor",
       "tierLabel": "Exact match",
       "reason": "Exact title match, by the author you named; by Frank Herbert; tagged science fiction."

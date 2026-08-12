@@ -47,28 +47,37 @@ public static class TitleKey
 
     public static IReadOnlySet<string> Tokens(string? title)
     {
-        var tokens = TextFold.Tokenize(title).Where(t => !FunctionWords.Contains(t)).ToHashSet(StringComparer.Ordinal);
+        var all = TextFold.Tokenize(title);
+        var distinguishing = all.Where(t => !FunctionWords.Contains(t)).ToHashSet(StringComparer.Ordinal);
 
         // A title made only of these ("The One and Only") keeps them rather than becoming unmatchable.
-        return tokens.Count > 0 ? tokens : TextFold.Tokenize(title).ToHashSet(StringComparer.Ordinal);
+        return distinguishing.Count > 0 ? distinguishing : all.ToHashSet(StringComparer.Ordinal);
     }
 
     /// <summary>Classifies <paramref name="candidateTitle"/> against what the reader asked for.</summary>
-    public static TitleMatch Compare(string? wantedTitle, string? candidateTitle)
+    public static TitleComparison Compare(string? wantedTitle, string? candidateTitle)
     {
         var wanted = Tokens(wantedTitle);
         var candidate = Tokens(candidateTitle);
 
-        if (wanted.Count == 0 || candidate.Count == 0) return TitleMatch.None;
-        if (wanted.SetEquals(candidate)) return TitleMatch.Exact;
+        // With no title asked for there is nothing to be surplus *to*. Reporting the candidate's own
+        // token count here would turn the ranker's tiebreak into "shortest title first" for every
+        // subject-only and author-only result, displacing the catalogue's relevance order.
+        var surplus = wanted.Count == 0 ? 0 : Math.Max(0, candidate.Count - wanted.Count);
 
-        return wanted.IsProperSubsetOf(candidate) ? TitleMatch.Near : TitleMatch.None;
+        if (wanted.Count == 0 || candidate.Count == 0) return new TitleComparison(TitleMatch.None, surplus);
+        if (wanted.SetEquals(candidate)) return new TitleComparison(TitleMatch.Exact, surplus);
+
+        var match = wanted.IsProperSubsetOf(candidate) ? TitleMatch.Near : TitleMatch.None;
+
+        return new TitleComparison(match, surplus);
     }
-
-    /// <summary>
-    /// Tokens the candidate carries beyond what was asked for. Used to order near-matches so the
-    /// tightest one wins — "The Hobbit" ahead of "The Hobbit &amp; The Lord of the Rings [collection]".
-    /// </summary>
-    public static int SurplusTokens(string? wantedTitle, string? candidateTitle) =>
-        Math.Max(0, Tokens(candidateTitle).Count - Tokens(wantedTitle).Count);
 }
+
+/// <summary>Both facts the ranker needs about one title pair, from a single pass over the tokens.</summary>
+/// <param name="Surplus">
+/// Tokens the candidate carries beyond what was asked for. Orders near-matches so the tightest one
+/// wins — "The Hobbit" ahead of "The Hobbit &amp; The Lord of the Rings [collection/set]". Zero when
+/// no title was asked for, so the tiebreak stays neutral instead of ranking by title length.
+/// </param>
+public readonly record struct TitleComparison(TitleMatch Match, int Surplus);

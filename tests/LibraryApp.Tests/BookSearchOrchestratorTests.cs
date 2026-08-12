@@ -26,7 +26,7 @@ public class BookSearchOrchestratorTests
     {
         var catalog = CatalogReturning([Dune]);
 
-        var result = await Orchestrate(SearchIntent.Empty, catalog).SearchAsync("???", 20, default);
+        var result = await Orchestrate(IntentOf(), catalog).SearchAsync("???", 20, default);
 
         Assert.Empty(result.Matches);
         Assert.False(result.Broadened);
@@ -135,7 +135,12 @@ public class BookSearchOrchestratorTests
         var intent = IntentOf(title: "Nonexistent", author: "Herbert");
 
         // Every retry finds nothing; the author lookup then finds a book carrying the author's key.
-        var catalog = new AuthorFallbackCatalog(byAuthor: [Dune], works: [BookOf("Dune Messiah", "Frank Herbert")]);
+        var catalog = new StubCatalog
+        {
+            // Every retry still carries a title; the fallback's author lookup does not.
+            Search = intent => string.IsNullOrWhiteSpace(intent.Title) ? [Dune] : [],
+            WorksByAuthor = [BookOf("Dune Messiah", "Frank Herbert")]
+        };
 
         var result = await Orchestrate(intent, catalog).SearchAsync("nonexistent by herbert", 5, default);
 
@@ -143,6 +148,29 @@ public class BookSearchOrchestratorTests
         Assert.Equal(MatchTier.AuthorOnly, result.Matches[0].Tier);
         Assert.True(result.Broadened);
         Assert.Equal(Dune.Authors[0].Key, catalog.RequestedAuthorKey);
+    }
+
+    [Fact]
+    public async Task Author_fallback_reasons_do_not_claim_filters_the_fallback_never_ran()
+    {
+        // The sibling test above covers the retry loop's effective intent. The fallback lives
+        // outside that loop and had its own copy of the rule, which is how it came to keep the
+        // subjects: /authors/{key}/works.json cannot take a subject filter at all.
+        var intent = IntentOf(title: "Nonexistent", author: "Herbert", keywords: ["cyberpunk"]);
+
+        var catalog = new StubCatalog
+        {
+            // Only the fallback's own lookup drops both the title and the subjects.
+            Search = i => string.IsNullOrWhiteSpace(i.Title) && i.Keywords.Count == 0 ? [Dune] : [],
+            WorksByAuthor = [BookOf("Dune Messiah", "Frank Herbert")]
+        };
+
+        var result = await Orchestrate(intent, catalog)
+            .SearchAsync("nonexistent cyberpunk by herbert", 5, default);
+
+        var match = Assert.Single(result.Matches);
+        Assert.Equal("Dune Messiah", match.Book.Title);
+        Assert.DoesNotContain("tagged", match.Reason);
     }
 
     [Fact]
@@ -166,7 +194,7 @@ public class BookSearchOrchestratorTests
     {
         // The probe can only add lower-tier candidates, so losing it must not cost the caller the
         // results the fielded query already returned.
-        var catalog = new StubCatalog([[Dune]]) { FreeTextThrows = true };
+        var catalog = new StubCatalog { Search = Replaying([Dune]), FreeTextThrows = true };
 
         var result = await Orchestrate(IntentOf(title: "Dune", author: "Herbert"), catalog)
             .SearchAsync("dune by herbert", 5, default);
@@ -217,7 +245,7 @@ public class BookSearchOrchestratorTests
         using var cts = new CancellationTokenSource();
         await cts.CancelAsync();
 
-        var orchestrator = Orchestrate(IntentOf(author: "Herbert"), new CancellationAwareCatalog());
+        var orchestrator = Orchestrate(IntentOf(author: "Herbert"), new StubCatalog());
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => orchestrator.SearchAsync("herbert", 20, cts.Token));
@@ -229,7 +257,7 @@ public class BookSearchOrchestratorTests
     private static readonly Book Foundation = BookOf("Foundation", "Isaac Asimov", 1951);
 
     private static Book BookOf(string title, string author, int? year = null) =>
-        new($"/works/{title}", title, [new Author(author, $"OL{title.Length}A")], [], year, null, 1);
+        new($"/works/{title}", title, [new Author(author, $"OL{title.Length}A")], [], year, null);
 
     private static SearchIntent IntentOf(
         string? title = null,
@@ -242,7 +270,21 @@ public class BookSearchOrchestratorTests
     private static BookSearchOrchestrator Orchestrate(SearchIntent intent, IBookCatalog catalog) =>
         new(new StubIntentParser(intent), catalog, NullLogger<BookSearchOrchestrator>.Instance);
 
-    private static StubCatalog CatalogReturning(params IReadOnlyList<Book>[] responses) => new(responses);
+    private static StubCatalog CatalogReturning(params IReadOnlyList<Book>[] responses) =>
+        new() { Search = Replaying(responses) };
+
+    /// <summary>Answers each call with the next canned response, repeating the last once exhausted.</summary>
+    private static Func<SearchIntent, IReadOnlyList<Book>> Replaying(params IReadOnlyList<Book>[] responses)
+    {
+        var remaining = new Queue<IReadOnlyList<Book>>(responses);
+        IReadOnlyList<Book> last = [];
+
+        return _ =>
+        {
+            if (remaining.Count > 0) last = remaining.Dequeue();
+            return last;
+        };
+    }
 
     private sealed class StubIntentParser(SearchIntent intent) : ISearchIntentParser
     {
@@ -256,82 +298,50 @@ public class BookSearchOrchestratorTests
             => throw new SearchUnavailableException("upstream is down");
     }
 
-    /// <summary>Replays one canned response per call, repeating the last once exhausted.</summary>
-    private sealed class StubCatalog(IReadOnlyList<Book>[] responses) : IBookCatalog
+    /// <summary>
+    /// The catalogue every test here runs against. Search answers are a rule over the intent rather
+    /// than a fixed sequence, because the fallback path depends on what the intent still carries
+    /// (a title or not) rather than on how many calls preceded it — <see cref="Replaying"/> adapts a
+    /// plain sequence to that shape. Cancellation is honoured on every method, so a cancelled token
+    /// behaves as the real catalogue would without needing a separate stub.
+    /// </summary>
+    private sealed class StubCatalog : IBookCatalog
     {
-        public List<SearchIntent> Received { get; } = [];
-        public List<string> FreeTextQueries { get; } = [];
-        public IReadOnlyList<Book> FreeTextResults { get; init; } = [];
+        public Func<SearchIntent, IReadOnlyList<Book>> Search { get; init; } = _ => [];
+        public IReadOnlyList<Book> WorksByAuthor { get; init; } = [];
         public bool FreeTextThrows { get; init; }
 
-        public Task<IReadOnlyList<Book>> SearchAsync(
-            SearchIntent intent, int limit, CancellationToken cancellationToken)
-        {
-            Received.Add(intent);
-
-            if (responses.Length == 0) return Task.FromResult<IReadOnlyList<Book>>([]);
-
-            return Task.FromResult(responses[Math.Min(Received.Count - 1, responses.Length - 1)]);
-        }
-
-        public Task<IReadOnlyList<Book>> SearchFreeTextAsync(
-            string query, int limit, CancellationToken cancellationToken)
-        {
-            FreeTextQueries.Add(query);
-
-            if (FreeTextThrows) throw new SearchUnavailableException("probe is down");
-
-            return Task.FromResult(FreeTextResults);
-        }
-
-        public Task<IReadOnlyList<Book>> GetWorksByAuthorAsync(
-            string authorKey, string authorName, int limit, CancellationToken cancellationToken)
-            => Task.FromResult<IReadOnlyList<Book>>([]);
-    }
-
-    /// <summary>Returns nothing for the retries, then feeds the author-only fallback.</summary>
-    private sealed class AuthorFallbackCatalog(IReadOnlyList<Book> byAuthor, IReadOnlyList<Book> works) : IBookCatalog
-    {
+        public List<SearchIntent> Received { get; } = [];
+        public List<string> FreeTextQueries { get; } = [];
         public string? RequestedAuthorKey { get; private set; }
 
         public Task<IReadOnlyList<Book>> SearchAsync(
             SearchIntent intent, int limit, CancellationToken cancellationToken)
-            // Every retry still carries a title; the fallback's author lookup does not.
-            => Task.FromResult(string.IsNullOrWhiteSpace(intent.Title) ? byAuthor : []);
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Received.Add(intent);
+
+            return Task.FromResult(Search(intent));
+        }
 
         public Task<IReadOnlyList<Book>> SearchFreeTextAsync(
             string query, int limit, CancellationToken cancellationToken)
-            => Task.FromResult<IReadOnlyList<Book>>([]);
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            FreeTextQueries.Add(query);
+
+            if (FreeTextThrows) throw new SearchUnavailableException("probe is down");
+
+            return Task.FromResult<IReadOnlyList<Book>>([]);
+        }
 
         public Task<IReadOnlyList<Book>> GetWorksByAuthorAsync(
             string authorKey, string authorName, int limit, CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             RequestedAuthorKey = authorKey;
-            return Task.FromResult(works);
-        }
-    }
 
-    private sealed class CancellationAwareCatalog : IBookCatalog
-    {
-        public Task<IReadOnlyList<Book>> SearchAsync(
-            SearchIntent intent, int limit, CancellationToken cancellationToken)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return Task.FromResult<IReadOnlyList<Book>>([]);
-        }
-
-        public Task<IReadOnlyList<Book>> SearchFreeTextAsync(
-            string query, int limit, CancellationToken cancellationToken)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return Task.FromResult<IReadOnlyList<Book>>([]);
-        }
-
-        public Task<IReadOnlyList<Book>> GetWorksByAuthorAsync(
-            string authorKey, string authorName, int limit, CancellationToken cancellationToken)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return Task.FromResult<IReadOnlyList<Book>>([]);
+            return Task.FromResult(WorksByAuthor);
         }
     }
 }

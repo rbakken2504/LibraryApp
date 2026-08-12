@@ -20,9 +20,6 @@ public sealed record SearchIntent(
     IReadOnlyList<string> Keywords,
     string Interpretation)
 {
-    public static SearchIntent Empty { get; } =
-        new(null, null, null, null, [], string.Empty);
-
     /// <summary>True when there is nothing for the catalog to search on.</summary>
     public bool IsEmpty =>
         string.IsNullOrWhiteSpace(Title)

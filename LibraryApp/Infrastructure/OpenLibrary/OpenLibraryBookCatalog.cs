@@ -18,7 +18,7 @@ public sealed class OpenLibraryBookCatalog(
     /// decidable from this one response, with no per-work detail fetch.
     /// </summary>
     private const string Fields =
-        "key,title,author_name,author_key,contributor,first_publish_year,cover_i,edition_count";
+        "key,title,author_name,author_key,contributor,first_publish_year,cover_i";
 
     public Task<IReadOnlyList<Book>> SearchAsync(
         SearchIntent intent,
@@ -55,9 +55,9 @@ public sealed class OpenLibraryBookCatalog(
 
         var payload = await GetAsync<OpenLibraryAuthorWorksResponse>(url, cancellationToken);
 
-        // This endpoint is thinner than the search index: no publish year, no edition count, and no
-        // author names. The name is supplied by the caller; the rest is genuinely absent, so those
-        // fields stay empty rather than being invented.
+        // This endpoint is thinner than the search index: no publish year and no author names. The
+        // name is supplied by the caller; the year is genuinely absent, so it stays null rather than
+        // being invented.
         return payload.Entries
             .Where(entry => !string.IsNullOrWhiteSpace(entry.Key))
             .Select(entry => new Book(
@@ -66,10 +66,20 @@ public sealed class OpenLibraryBookCatalog(
                 Authors: [new Author(authorName, authorKey)],
                 Contributors: [],
                 FirstPublishYear: null,
-                CoverId: entry.Covers?.FirstOrDefault(id => id > 0),
-                EditionCount: 0))
+                CoverId: FirstUsableCover(entry.Covers)))
             .ToArray();
     }
+
+    /// <summary>The first real cover id, or <c>null</c> when the entry has none.</summary>
+    /// <remarks>
+    /// The cast is what makes this correct. <c>FirstOrDefault</c> over a sequence of <c>int</c>
+    /// reports "nothing matched" as <c>0</c>, and this endpoint really does send <c>-1</c>
+    /// placeholders — so the obvious spelling turns a missing cover into cover id 0, which
+    /// <see cref="Api.Contracts.BookResource"/> then renders as a URL that 404s. Widening to
+    /// <c>int?</c> first makes absence come back as absence.
+    /// </remarks>
+    internal static int? FirstUsableCover(IReadOnlyList<int>? covers) =>
+        covers?.Where(id => id > 0).Cast<int?>().FirstOrDefault();
 
     private async Task<IReadOnlyList<Book>> GetBooksAsync(string url, CancellationToken cancellationToken)
     {
@@ -142,8 +152,7 @@ public sealed class OpenLibraryBookCatalog(
         Authors: NameKey.Distinct(PairAuthors(doc)),
         Contributors: doc.Contributor ?? [],
         FirstPublishYear: doc.FirstPublishYear,
-        CoverId: doc.CoverId,
-        EditionCount: doc.EditionCount ?? 0);
+        CoverId: doc.CoverId);
 
     /// <summary>
     /// Pairs each author name with its key. The two arrays are positional and, in practice, equal

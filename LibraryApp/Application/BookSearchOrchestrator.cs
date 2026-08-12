@@ -68,7 +68,10 @@ public sealed class BookSearchOrchestrator(
         var authorFallback = await AuthorFallbackAsync(parsed, limit, cancellationToken);
         if (authorFallback.Count > 0)
         {
-            var ranked = CandidateRanker.Rank(parsed with { Title = null }, authorFallback, limit);
+            // Rank against what the fallback actually ran. Carrying the parsed subjects or years in
+            // here would have every result explain itself as "tagged cyberpunk" for a filter the
+            // works endpoint cannot even take.
+            var ranked = CandidateRanker.Rank(AuthorAlone(parsed), authorFallback, limit);
             return new BookSearchResult(parsed, Broadened: true, ClearWinner: false, ranked.Matches);
         }
 
@@ -104,13 +107,21 @@ public sealed class BookSearchOrchestrator(
 
         var probe = ProbeAsync($"{intent.Title} {intent.Author}", limit, cancellationToken);
 
+        // Both are already in flight, so this is the one place that waits — and it observes both,
+        // rather than leaving a faulted probe unobserved.
         await Task.WhenAll(fielded, probe);
 
+        // .Result rather than await, deliberately. WhenAll above has already thrown if either task
+        // faulted, so both are complete and successful by the time we get here: reading them is a
+        // fetch, not a wait. An await would tell the reader to expect a suspension point that
+        // cannot occur — and there is no AggregateException to unwrap, because a fault never
+        // reaches this line.
+        //
         // Fielded results first so their relevance order survives as the within-tier tiebreak.
         return fielded.Result
-            .Concat(probe.Result)
-            .DistinctBy(book => book.Key, StringComparer.Ordinal)
-            .ToArray();
+                      .Concat(probe.Result)
+                      .DistinctBy(book => book.Key, StringComparer.Ordinal)
+                      .ToArray();
     }
 
     private async Task<IReadOnlyList<Book>> ProbeAsync(
@@ -134,10 +145,7 @@ public sealed class BookSearchOrchestrator(
         if (string.IsNullOrWhiteSpace(intent.Author)) return [];
 
         // The author key only comes from a search hit, so find the author before listing their works.
-        var byAuthor = await catalog.SearchAsync(
-            new SearchIntent(null, intent.Author, null, null, [], intent.Interpretation),
-            limit,
-            cancellationToken);
+        var byAuthor = await catalog.SearchAsync(AuthorAlone(intent), limit, cancellationToken);
 
         var match = byAuthor
             .SelectMany(book => book.Authors)
@@ -153,6 +161,14 @@ public sealed class BookSearchOrchestrator(
         // them, returning nothing would be worse than returning the looser set.
         return works.Count > 0 ? works : byAuthor;
     }
+
+    /// <summary>
+    /// The intent stripped to the author — what the fallback searches on, and therefore the only
+    /// thing its results may claim to have matched. Both facts come from one place so the query and
+    /// the explanation of it cannot drift apart.
+    /// </summary>
+    private static SearchIntent AuthorAlone(SearchIntent intent) =>
+        intent with { Title = null, YearFrom = null, YearTo = null, Keywords = [] };
 
     /// <summary>Retries cost a multi-second catalog call each, so a failing search stops after four.</summary>
     private const int MaxAttempts = 4;

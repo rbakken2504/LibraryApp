@@ -17,7 +17,7 @@ public class TitleKeyTests
     [InlineData("The Hobbit", null, TitleMatch.None)]
     public void Compare_classifies_the_candidate_against_what_was_asked_for(
         string? wanted, string? candidate, TitleMatch expected)
-        => Assert.Equal(expected, TitleKey.Compare(wanted, candidate));
+        => Assert.Equal(expected, TitleKey.Compare(wanted, candidate).Match);
 
     [Fact]
     public void Words_that_only_matter_in_a_query_are_never_stripped_from_a_title()
@@ -26,8 +26,8 @@ public class TitleKeyTests
         // the point of a cache key. Reusing it here would reduce "The Book Thief" to {thief} and
         // match a pile of unrelated works. This test exists to keep the two apart.
         Assert.Equal(["book", "thief"], TitleKey.Tokens("The Book Thief").Order());
-        Assert.Equal(TitleMatch.Exact, TitleKey.Compare("The Book Thief", "the book thief"));
-        Assert.Equal(TitleMatch.None, TitleKey.Compare("The Book Thief", "The Thief"));
+        Assert.Equal(TitleMatch.Exact, TitleKey.Compare("The Book Thief", "the book thief").Match);
+        Assert.Equal(TitleMatch.None, TitleKey.Compare("The Book Thief", "The Thief").Match);
 
         // The contrast, made explicit.
         Assert.Equal("thief", QueryNormalizer.Canonicalize("The Book Thief"));
@@ -44,16 +44,16 @@ public class TitleKeyTests
     [InlineData("The Hobbit", "The Hobbit", 0)]
     [InlineData("The Hobbit", "The Hobbit, or There and Back Again", 3)]
     [InlineData("The Hobbit", "The Hobbit & The Lord of the Rings [collection/set]", 4)]
-    public void SurplusTokens_measures_how_much_wider_the_candidate_is(
+    public void Surplus_measures_how_much_wider_the_candidate_is(
         string wanted, string candidate, int expected)
-        => Assert.Equal(expected, TitleKey.SurplusTokens(wanted, candidate));
+        => Assert.Equal(expected, TitleKey.Compare(wanted, candidate).Surplus);
 
     [Fact]
     public void Dropping_connectives_lets_a_real_subtitle_outrank_a_bundle()
     {
         // Counting "or"/"and"/"of" leaves these tied, and the tiebreak stops discriminating.
-        var subtitle = TitleKey.SurplusTokens("The Hobbit", "The Hobbit, or There and Back Again");
-        var bundle = TitleKey.SurplusTokens("The Hobbit", "The Hobbit & The Lord of the Rings [collection/set]");
+        var subtitle = TitleKey.Compare("The Hobbit", "The Hobbit, or There and Back Again").Surplus;
+        var bundle = TitleKey.Compare("The Hobbit", "The Hobbit & The Lord of the Rings [collection/set]").Surplus;
 
         Assert.True(subtitle < bundle, $"subtitle surplus {subtitle} should be below bundle surplus {bundle}");
     }

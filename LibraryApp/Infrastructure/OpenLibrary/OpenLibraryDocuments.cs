@@ -35,9 +35,6 @@ internal sealed class OpenLibraryDoc
 
     [JsonPropertyName("cover_i")]
     public int? CoverId { get; set; }
-
-    [JsonPropertyName("edition_count")]
-    public int? EditionCount { get; set; }
 }
 
 /// <summary>

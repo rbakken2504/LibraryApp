@@ -11,7 +11,6 @@ public sealed record BookResource(
     IReadOnlyList<string> Authors,
     int? FirstPublishYear,
     string? CoverUrl,
-    int EditionCount,
     string Tier,
     string TierLabel,
     string Reason)
@@ -25,7 +24,6 @@ public sealed record BookResource(
         CoverUrl: match.Book.CoverId is { } id
             ? $"https://covers.openlibrary.org/b/id/{id}-M.jpg"
             : null,
-        EditionCount: match.Book.EditionCount,
         Tier: match.Tier.ToString(),
         TierLabel: Label(match.Tier),
         Reason: match.Reason);

@@ -20,5 +20,4 @@ public sealed record Book(
     IReadOnlyList<Author> Authors,
     IReadOnlyList<string> Contributors,
     int? FirstPublishYear,
-    int? CoverId,
-    int EditionCount);
+    int? CoverId);

@@ -15,11 +15,21 @@ public static class CandidateRanker
 {
     public static RankedCandidates Rank(SearchIntent intent, IReadOnlyList<Book> candidates, int limit)
     {
-        var scored = candidates.Select(book => new
+        // Both facts are worked out once here and carried, rather than re-derived by the explainer:
+        // two answers to the same question are two chances to disagree.
+        var scored = candidates.Select(book =>
         {
-            Book = book,
-            Tier = TierFor(intent, book),
-            Surplus = TitleKey.SurplusTokens(intent.Title, book.Title)
+            var title = TitleKey.Compare(intent.Title, book.Title);
+            var credit = AuthorCredit.Find(book, intent.Author);
+
+            return new
+            {
+                Book = book,
+                Title = title.Match,
+                title.Surplus,
+                Credit = credit,
+                Tier = TierFor(title.Match, credit)
+            };
         });
 
         // OrderBy is stable, so the catalogue's own relevance survives as the final tiebreak within
@@ -28,7 +38,10 @@ public static class CandidateRanker
             .OrderBy(c => (int)c.Tier)
             .ThenBy(c => c.Surplus)
             .Take(limit)
-            .Select(c => new BookMatch(c.Book, c.Tier, MatchExplainer.Explain(c.Book, intent, c.Tier)))
+            .Select(c => new BookMatch(
+                c.Book,
+                c.Tier,
+                MatchExplainer.Explain(c.Book, intent, c.Tier, c.Title, c.Credit)))
             .ToArray();
 
         var exactPrimary = ordered.Count(m => m.Tier is MatchTier.ExactTitlePrimaryAuthor);
@@ -36,54 +49,27 @@ public static class CandidateRanker
         return new RankedCandidates(ordered, ClearWinner: exactPrimary == 1);
     }
 
-    /// <summary>
-    /// How well did the title match, how well did the author match, and what does that pair mean?
-    /// </summary>
+    /// <summary>What a title comparison and an author credit together mean for rank.</summary>
     /// <remarks>
-    /// A missing title or author needs no special case: <see cref="TitleKey.Compare"/> and
-    /// <see cref="NameKey.Matches"/> both report no match when the reader did not ask for one, which
-    /// lands on the right tier anyway.
+    /// A missing title or author needs no special case: <see cref="TitleKey.Compare"/> reports no
+    /// match and <see cref="AuthorCredit.Find"/> returns <c>null</c> when the reader did not ask for
+    /// one, which lands on the right tier anyway.
     /// </remarks>
-    private static MatchTier TierFor(SearchIntent intent, Book book)
-    {
-        var title = TitleKey.Compare(intent.Title, book.Title);
-        var author = AuthorMatch(intent.Author, book);
-
+    private static MatchTier TierFor(TitleMatch title, AuthorCredit? credit) =>
         // Arms run strongest to weakest, matching the order MatchTier declares them in.
-        return (title, author) switch
+        (title, credit?.Kind) switch
         {
-            (TitleMatch.Exact, AuthorRole.Primary)     => MatchTier.ExactTitlePrimaryAuthor,
-            (TitleMatch.Exact, AuthorRole.Contributor) => MatchTier.ExactTitleContributor,
-            (TitleMatch.Near,  not AuthorRole.None)    => MatchTier.NearTitleAuthor,
+            (TitleMatch.Exact, CreditKind.Primary)     => MatchTier.ExactTitlePrimaryAuthor,
+            (TitleMatch.Exact, CreditKind.Contributor) => MatchTier.ExactTitleContributor,
+            (TitleMatch.Near,  not null)               => MatchTier.NearTitleAuthor,
 
             // Title fits, but nobody corroborates it — a different edition, an adaptation, or a
             // book that happens to share the name.
             (not TitleMatch.None, _)                   => MatchTier.TitleOnly,
 
             // Wrong book, right person: keep it as one of that author's other works.
-            (_, not AuthorRole.None)                   => MatchTier.AuthorOnly,
+            (_, not null)                              => MatchTier.AuthorOnly,
 
             _                                          => MatchTier.Discovery
         };
-    }
-
-    private enum AuthorRole { None, Primary, Contributor }
-
-    /// <summary>
-    /// Primary beats contributor, which is the whole distinction between the top two tiers.
-    /// The primary list comes from the search response and matches the work record's own authors.
-    /// </summary>
-    private static AuthorRole AuthorMatch(string? wantedAuthor, Book book)
-    {
-        if (book.Authors.Any(author => NameKey.Matches(wantedAuthor, author.Name)))
-        {
-            return AuthorRole.Primary;
-        }
-
-        var contributorMatch = book.Contributors
-            .Select(NameKey.SplitRole)
-            .Any(c => NameKey.Matches(wantedAuthor, c.Name));
-
-        return contributorMatch ? AuthorRole.Contributor : AuthorRole.None;
-    }
 }

@@ -70,6 +70,19 @@ public class OpenLibraryQueryTests
         Assert.Contains("Ursula%20K.%20Le%20Guin", url);
     }
 
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData(new int[0], null)]
+    [InlineData(new[] { -1 }, null)]              // the endpoint's documented "no cover" placeholder
+    [InlineData(new[] { -1, 392508 }, 392508)]
+    [InlineData(new[] { 392508, 11481354 }, 392508)]
+    public void A_missing_cover_stays_missing_rather_than_becoming_cover_zero(int[]? covers, int? expected)
+    {
+        // FirstOrDefault over int reports absence as 0, and cover id 0 is a URL that 404s — the
+        // placeholder would reach the browser as a broken image rather than the "No cover" tile.
+        Assert.Equal(expected, OpenLibraryBookCatalog.FirstUsableCover(covers));
+    }
+
     private static SearchIntent IntentOf(
         string? title = null,
         string? author = null,

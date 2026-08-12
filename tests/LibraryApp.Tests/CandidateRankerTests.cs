@@ -82,10 +82,15 @@ public class CandidateRankerTests
     {
         var intent = new SearchIntent(null, null, null, null, ["cyberpunk"], "test");
 
-        var result = Rank(intent, Hobbit, Dune, Foundation);
+        // Title lengths deliberately differ. Every fixture folding to one token would let this pass
+        // whether or not the tiebreak stayed neutral — the long title has to lead for it to mean
+        // anything, since surplus would otherwise sort it last.
+        var result = Rank(intent, HobbitCollection, Dune, Foundation);
 
         Assert.All(result.Matches, m => Assert.Equal(MatchTier.Discovery, m.Tier));
-        Assert.Equal(["The Hobbit", "Dune", "Foundation"], result.Matches.Select(m => m.Book.Title));
+        Assert.Equal(
+            ["The Hobbit & The Lord of the Rings [collection/set]", "Dune", "Foundation"],
+            result.Matches.Select(m => m.Book.Title));
         Assert.False(result.ClearWinner);
     }
 
@@ -95,6 +100,23 @@ public class CandidateRankerTests
         var result = Rank(Intent("Nonexistent", "Herbert"), Dune);
 
         Assert.Equal(MatchTier.AuthorOnly, Assert.Single(result.Matches).Tier);
+    }
+
+    [Fact]
+    public void An_author_only_reason_names_the_person_asked_about_exactly_once()
+    {
+        // The catalogue lists Frank first, but the reader asked about Brian. Tier and reason come
+        // from one lookup, so the banner cannot name a different person than the match found — and
+        // since the banner already names them, nothing repeats it.
+        var coAuthored = new Book(
+            "/works/house-atreides", "House Atreides",
+            Authors: [new Author("Frank Herbert", "OL79034A"), new Author("Brian Herbert", "OL79035A")],
+            Contributors: [], FirstPublishYear: 1999, CoverId: null);
+
+        var match = Assert.Single(Rank(Intent("Nonexistent", "Brian Herbert"), coAuthored).Matches);
+
+        Assert.Equal(MatchTier.AuthorOnly, match.Tier);
+        Assert.Equal("Another work by Brian Herbert.", match.Reason);
     }
 
     [Fact]
@@ -131,13 +153,13 @@ public class CandidateRankerTests
         "/works/dune", "Dune",
         Authors: [new Author("Frank Herbert", "OL79034A"), new Author("Френк Герберт", "OL7388009A")],
         Contributors: ["Scott Brick (Narrator)", "John Schoenherr (Illustrator)"],
-        FirstPublishYear: 1965, CoverId: 392508, EditionCount: 160);
+        FirstPublishYear: 1965, CoverId: 392508);
 
     private static readonly Book DuneNarratedEdition = new(
         "/works/dune-audio", "Dune",
         Authors: [new Author("Some Publisher", "OL1X")],
         Contributors: ["Scott Brick (Narrator)", "Frank Herbert (Author)"],
-        FirstPublishYear: 2007, CoverId: null, EditionCount: 3);
+        FirstPublishYear: 2007, CoverId: null);
 
     private static readonly Book Hobbit = Work("/works/OL27482W", "The Hobbit", "J.R.R. Tolkien");
 
@@ -151,12 +173,12 @@ public class CandidateRankerTests
     private static readonly Book HobbitAdaptation = new(
         "/works/OL219602W", "The Hobbit",
         Authors: [new Author("Charles Dixon", "OL2X"), new Author("Sean Deming", "OL3X")],
-        Contributors: [], FirstPublishYear: 1989, CoverId: null, EditionCount: 4);
+        Contributors: [], FirstPublishYear: 1989, CoverId: null);
 
     private static readonly Book Foundation = Work("/works/foundation", "Foundation", "Isaac Asimov");
 
     private static Book Work(string key, string title, string author) =>
-        new(key, title, [new Author(author, $"OL{key.Length}A")], [], 1950, null, 1);
+        new(key, title, [new Author(author, $"OL{key.Length}A")], [], 1950, null);
 
     private static SearchIntent Intent(string? title, string? author) =>
         new(title, author, null, null, [], "test");
