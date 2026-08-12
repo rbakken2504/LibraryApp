@@ -4,6 +4,8 @@ Natural-language book search. You ask for *"gritty space opera about corporate p
 *"dune by frank herbert"*; Gemini resolves that into structured search fields, OpenLibrary retrieves
 against them, and the results come back ranked into tiers with an explanation of why each matched.
 
+**Live demo — <https://libraryapp-bb3c.onrender.com>**
+
 Name a book and its author and there is one unambiguous answer, so that is all you get:
 
 ```
@@ -33,6 +35,42 @@ GET /api/books/search?q=dune by frank herbert
 Where the answer is genuinely ambiguous you get up to five, ranked. `the hobbit by tolkien` returns
 the novel and the graphic-novel adaptation both as **Exact match**, then two **Close match** variants,
 then a **Same author** work — rather than silently picking one.
+
+---
+
+## Features
+
+**Query understanding**
+
+- Messy plain-text input in all three shapes: sparse (`dickens`, `tale two cities`), dense and noisy
+  (`tolkien hobbit illustrated deluxe 1937`), ambiguous (`mark huckleberry`, `austen bennet`).
+- One Gemini call resolves the blob to `{ title?, author?, yearFrom?, yearTo?, keywords[] }`, plus an
+  `interpretation` telling the reader how their words were read.
+- Character hints, partial names and misspellings resolve to the work they identify — `burrows` is
+  Burroughs — and the parser declines to choose when several works still fit.
+
+**Retrieval**
+
+- OpenLibrary `/search.json` through dedicated `title=` / `author=` parameters: ~3.5s against ~18.8s
+  for the equivalent hand-built Solr query.
+- A concurrent free-text probe, the only route by which a contributor-only match can be retrieved.
+- `/authors/{key}/works.json` for the author-only fallback.
+- Deterministic loosening when a parse returns nothing, with `broadened` reported to the client.
+
+**Ranking and explanation**
+
+- Six tiers, exact-title-and-primary-author down to subject-led discovery, with a single unambiguous
+  answer returned alone and ties treated as ambiguity.
+- De-duplication to canonical works, and adaptations ranked below the originals they retell using the
+  role data OpenLibrary hides in `contributor`.
+- Explanations derived from the retrieved fields rather than generated, so they cannot hallucinate.
+
+**API and delivery**
+
+- Output caching keyed on a fingerprint of the normalized query, so rewordings share one entry.
+- Vue + Tailwind search page served from the same origin.
+- 502 on an exhausted upstream, 400 on an empty query, shallow `/health` for platform probes.
+- Containerised and deployed, with 125 tests covering the deterministic layers.
 
 ---
 
@@ -237,6 +275,10 @@ odyssey`, `1984` and `fahrenheit 451` each resolve on the first attempt.
 ## Setup
 
 **Requirements:** .NET 10 SDK, and a Gemini API key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
+
+> The brief specifies .NET 8; targeting **.NET 10** was confirmed as acceptable by email. If you would
+> rather not install the SDK, the [container](#deployment) needs only Docker and runs the same code:
+> `docker build -t libraryapp . && docker run -p 8080:8080 -e Gemini__ApiKey="<key>" libraryapp`.
 
 ```bash
 dotnet user-secrets set "Gemini:ApiKey" "<your-key>" --project LibraryApp
@@ -514,7 +556,8 @@ OpenAI-compatible endpoint, so swapping providers doesn't touch the core.
 
 ## Known limitations
 
-Limits of what *is* built. Things deliberately left out are in [Not built](#not-built-and-why) below.
+Limits of what *is* built. Things deliberately left out are in
+[Future improvements](#future-improvements-and-what-is-deliberately-not-built) below.
 
 **The cache key is a set of tokens.** Sorting discards word order, and `Distinct()` discards frequency.
 `man bites dog` and `dog bites man` share a key. There's no stemmer either, so `cozy mystery` and
@@ -537,10 +580,10 @@ intent schema omits them rather than accepting fields it can't act on.
 
 ---
 
-## Not built, and why
+## Future improvements, and what is deliberately not built
 
-This is an interview exercise, not a production service. The following are deliberate omissions with
-a known cost rather than things that were missed.
+Everything below is what more time would buy. This is an interview exercise rather than a production
+service, so each is a deliberate omission carrying a known cost — not something that was missed.
 
 ### 1. A distributed cache, and a distributed lock with it
 
