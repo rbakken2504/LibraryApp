@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace BookSearchService.Domain;
+namespace LibraryApp.Domain;
 
 /// <summary>
 /// Normalizes a phrase into an OpenLibrary subject token: lowercase ASCII alphanumerics

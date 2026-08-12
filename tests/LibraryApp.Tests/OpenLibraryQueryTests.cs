@@ -1,5 +1,5 @@
-using BookSearchService.Domain;
-using BookSearchService.Infrastructure.OpenLibrary;
+using LibraryApp.Domain;
+using LibraryApp.Infrastructure.OpenLibrary;
 
 namespace LibraryApp.Tests;
 

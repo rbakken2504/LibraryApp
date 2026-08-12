@@ -1,9 +1,9 @@
-using BookSearchService.Api.Contracts;
-using BookSearchService.Application;
+using LibraryApp.Api.Contracts;
+using LibraryApp.Application;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.OutputCaching;
 
-namespace BookSearchService.Api.Controllers;
+namespace LibraryApp.Api.Controllers;
 
 [ApiController]
 [Route("api/books")]

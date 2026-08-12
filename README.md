@@ -1,4 +1,4 @@
-# BookSearchService
+# LibraryApp
 
 Natural-language book search. You ask for *"gritty space opera about corporate politics"*; Gemini
 resolves that into structured search fields, OpenLibrary retrieves against them, and each result

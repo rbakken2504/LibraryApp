@@ -1,4 +1,4 @@
-using BookSearchService.Domain;
+using LibraryApp.Domain;
 
 namespace LibraryApp.Tests;
 

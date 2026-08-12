@@ -1,4 +1,4 @@
-namespace BookSearchService.Infrastructure.Gemini;
+namespace LibraryApp.Infrastructure.Gemini;
 
 public sealed class GeminiOptions
 {

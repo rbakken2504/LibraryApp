@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace BookSearchService.Infrastructure.OpenLibrary;
+namespace LibraryApp.Infrastructure.OpenLibrary;
 
 internal sealed class OpenLibrarySearchResponse
 {

@@ -1,6 +1,6 @@
-using BookSearchService.Domain;
+using LibraryApp.Domain;
 
-namespace BookSearchService.Application.Abstractions;
+namespace LibraryApp.Application.Abstractions;
 
 /// <summary>Turns a natural-language query into fields the catalog can search on.</summary>
 public interface ISearchIntentParser

@@ -1,4 +1,4 @@
-namespace BookSearchService.Application.Abstractions;
+namespace LibraryApp.Application.Abstractions;
 
 /// <summary>
 /// An upstream dependency (intent parser or catalog) failed after its retry budget was spent.

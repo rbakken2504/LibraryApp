@@ -1,6 +1,6 @@
-using BookSearchService.Domain;
+using LibraryApp.Domain;
 
-namespace BookSearchService.Api.Contracts;
+namespace LibraryApp.Api.Contracts;
 
 /// <param name="Reason">Why this book satisfied the query, derived from the matched fields.</param>
 public sealed record BookResource(

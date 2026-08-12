@@ -1,4 +1,4 @@
-namespace BookSearchService.Infrastructure.Gemini;
+namespace LibraryApp.Infrastructure.Gemini;
 
 /// <summary>
 /// The wire shape Gemini fills in. Kept separate from <see cref="Domain.SearchIntent"/> so the

@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace BookSearchService.Domain;
+namespace LibraryApp.Domain;
 
 /// <summary>
 /// Derives the "why did this match?" text from the intent that retrieved the book.

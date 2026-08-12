@@ -1,4 +1,4 @@
-namespace BookSearchService.Infrastructure.OpenLibrary;
+namespace LibraryApp.Infrastructure.OpenLibrary;
 
 public sealed class OpenLibraryOptions
 {

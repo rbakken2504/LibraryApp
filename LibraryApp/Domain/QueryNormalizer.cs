@@ -3,7 +3,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace BookSearchService.Domain;
+namespace LibraryApp.Domain;
 
 /// <summary>
 /// Collapses natural-language queries that mean the same thing onto one cache key, so

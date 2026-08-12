@@ -1,4 +1,4 @@
-namespace BookSearchService.Domain;
+namespace LibraryApp.Domain;
 
 /// <summary>
 /// A natural-language query resolved into fields OpenLibrary can actually search on.

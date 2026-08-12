@@ -1,4 +1,4 @@
-namespace BookSearchService.Domain;
+namespace LibraryApp.Domain;
 
 /// <summary>
 /// A work as the catalog knows it. Deliberately narrower than what OpenLibrary returns —

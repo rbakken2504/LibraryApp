@@ -1,9 +1,9 @@
-using BookSearchService.Application.Abstractions;
-using BookSearchService.Domain;
+using LibraryApp.Application.Abstractions;
+using LibraryApp.Domain;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 
-namespace BookSearchService.Infrastructure.Gemini;
+namespace LibraryApp.Infrastructure.Gemini;
 
 /// <summary>
 /// Resolves a natural-language query into a <see cref="SearchIntent"/> using a single Gemini call.

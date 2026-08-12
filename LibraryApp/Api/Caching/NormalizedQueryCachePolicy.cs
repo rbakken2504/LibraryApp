@@ -1,7 +1,7 @@
-using BookSearchService.Domain;
+using LibraryApp.Domain;
 using Microsoft.AspNetCore.OutputCaching;
 
-namespace BookSearchService.Api.Caching;
+namespace LibraryApp.Api.Caching;
 
 /// <summary>
 /// Keys cached responses on the <em>normalized</em> query, so requests that mean the same thing

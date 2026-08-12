@@ -1,6 +1,6 @@
-using BookSearchService.Application;
-using BookSearchService.Application.Abstractions;
-using BookSearchService.Domain;
+using LibraryApp.Application;
+using LibraryApp.Application.Abstractions;
+using LibraryApp.Domain;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace LibraryApp.Tests;

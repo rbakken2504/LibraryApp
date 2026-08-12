@@ -1,31 +1,31 @@
-@BookSearchService_HostAddress = http://localhost:5014
+@LibraryApp_HostAddress = http://localhost:5014
 
 ### Specific work — exercises title + author dedicated params
-GET {{BookSearchService_HostAddress}}/api/books/search?q=dune by frank herbert
+GET {{LibraryApp_HostAddress}}/api/books/search?q=dune by frank herbert
 Accept: application/json
 
 ### Vague query — returns 0 results and times out if sent raw to OpenLibrary.
 ### Getting real books back here is the proof that parsing before retrieval works.
-GET {{BookSearchService_HostAddress}}/api/books/search?q=gritty space opera about corporate politics
+GET {{LibraryApp_HostAddress}}/api/books/search?q=gritty space opera about corporate politics
 Accept: application/json
 
 ### Confirms keywords became subject: filters rather than free text
-GET {{BookSearchService_HostAddress}}/api/books/search?q=cyberpunk dystopian novels
+GET {{LibraryApp_HostAddress}}/api/books/search?q=cyberpunk dystopian novels
 Accept: application/json
 
 ### Year range — should parse into first_publish_year:[1990 TO 1999]
-GET {{BookSearchService_HostAddress}}/api/books/search?q=cyberpunk novels from the 90s
+GET {{LibraryApp_HostAddress}}/api/books/search?q=cyberpunk novels from the 90s
 Accept: application/json
 
 ### Cache check, part 1 — expect a slow response (AI call + catalog round trip)
-GET {{BookSearchService_HostAddress}}/api/books/search?q=books by stephen king
+GET {{LibraryApp_HostAddress}}/api/books/search?q=books by stephen king
 Accept: application/json
 
 ### Cache check, part 2 — different wording, same meaning.
 ### Must be a cache hit: fast, and no Gemini/OpenLibrary lines in the log.
-GET {{BookSearchService_HostAddress}}/api/books/search?q=KING, Stephen books!
+GET {{LibraryApp_HostAddress}}/api/books/search?q=KING, Stephen books!
 Accept: application/json
 
 ### Validation — empty q returns 400 ProblemDetails
-GET {{BookSearchService_HostAddress}}/api/books/search?q=
+GET {{LibraryApp_HostAddress}}/api/books/search?q=
 Accept: application/json

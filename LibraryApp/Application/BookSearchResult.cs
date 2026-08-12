@@ -1,6 +1,6 @@
-using BookSearchService.Domain;
+using LibraryApp.Domain;
 
-namespace BookSearchService.Application;
+namespace LibraryApp.Application;
 
 /// <param name="Intent">
 /// The intent the catalog actually ran — post-broadening, so it may be looser than what was parsed.

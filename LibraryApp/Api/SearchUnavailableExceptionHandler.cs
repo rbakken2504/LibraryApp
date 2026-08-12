@@ -1,8 +1,8 @@
-using BookSearchService.Application.Abstractions;
+using LibraryApp.Application.Abstractions;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 
-namespace BookSearchService.Api;
+namespace LibraryApp.Api;
 
 /// <summary>
 /// Maps an exhausted upstream to 502. There is no degraded fallback on purpose — sending the raw

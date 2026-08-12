@@ -1,6 +1,6 @@
-using BookSearchService.Application;
+using LibraryApp.Application;
 
-namespace BookSearchService.Api.Contracts;
+namespace LibraryApp.Api.Contracts;
 
 /// <param name="Query">
 /// The query that produced this result set — which on a cache hit is the wording that first

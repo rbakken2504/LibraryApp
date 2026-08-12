@@ -1,6 +1,6 @@
-using BookSearchService.Domain;
+using LibraryApp.Domain;
 
-namespace BookSearchService.Application.Abstractions;
+namespace LibraryApp.Application.Abstractions;
 
 /// <summary>Retrieves books matching a structured intent, in the catalog's own relevance order.</summary>
 public interface IBookCatalog

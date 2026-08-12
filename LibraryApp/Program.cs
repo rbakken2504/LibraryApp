@@ -1,11 +1,11 @@
 using System.ClientModel;
 using System.ClientModel.Primitives;
-using BookSearchService.Api;
-using BookSearchService.Api.Caching;
-using BookSearchService.Application;
-using BookSearchService.Application.Abstractions;
-using BookSearchService.Infrastructure.Gemini;
-using BookSearchService.Infrastructure.OpenLibrary;
+using LibraryApp.Api;
+using LibraryApp.Api.Caching;
+using LibraryApp.Application;
+using LibraryApp.Application.Abstractions;
+using LibraryApp.Infrastructure.Gemini;
+using LibraryApp.Infrastructure.OpenLibrary;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using OpenAI;

@@ -1,7 +1,7 @@
-using BookSearchService.Application.Abstractions;
-using BookSearchService.Domain;
+using LibraryApp.Application.Abstractions;
+using LibraryApp.Domain;
 
-namespace BookSearchService.Application;
+namespace LibraryApp.Application;
 
 /// <summary>
 /// The search pipeline: parse the query with AI, retrieve from the catalog, explain the matches.

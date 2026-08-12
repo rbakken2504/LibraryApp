@@ -1,9 +1,9 @@
 using System.Net.Http.Json;
-using BookSearchService.Application.Abstractions;
-using BookSearchService.Domain;
+using LibraryApp.Application.Abstractions;
+using LibraryApp.Domain;
 using Microsoft.AspNetCore.WebUtilities;
 
-namespace BookSearchService.Infrastructure.OpenLibrary;
+namespace LibraryApp.Infrastructure.OpenLibrary;
 
 /// <summary>
 /// Retrieves books from openlibrary.org's search endpoint, in its own relevance order.
