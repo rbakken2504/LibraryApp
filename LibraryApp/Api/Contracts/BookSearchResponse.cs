@@ -14,10 +14,15 @@ namespace LibraryApp.Api.Contracts;
 /// True when the parsed query returned nothing and had to be relaxed — the results are real but
 /// looser than what was asked for.
 /// </param>
+/// <param name="ClearWinner">
+/// Exactly one candidate was an exact title match by the named author, so <c>Results</c> holds only
+/// that book. When false the list is up to five ranked candidates and the caller should show them all.
+/// </param>
 public sealed record BookSearchResponse(
     string Query,
     string Interpretation,
     bool Broadened,
+    bool ClearWinner,
     int Count,
     IReadOnlyList<BookResource> Results)
 {
@@ -29,6 +34,7 @@ public sealed record BookSearchResponse(
             Query: query,
             Interpretation: result.Intent.Interpretation,
             Broadened: result.Broadened,
+            ClearWinner: result.ClearWinner,
             Count: results.Length,
             Results: results);
     }

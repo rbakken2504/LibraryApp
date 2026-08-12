@@ -1,30 +1,39 @@
 # LibraryApp
 
-Natural-language book search. You ask for *"gritty space opera about corporate politics"*; Gemini
-resolves that into structured search fields, OpenLibrary retrieves against them, and each result
-comes back with an explanation of why it matched.
+Natural-language book search. You ask for *"gritty space opera about corporate politics"* or
+*"dune by frank herbert"*; Gemini resolves that into structured search fields, OpenLibrary retrieves
+against them, and the results come back ranked into tiers with an explanation of why each matched.
+
+Name a book and its author and there is one unambiguous answer, so that is all you get:
 
 ```
-GET /api/books/search?q=cyberpunk novels from the 90s
+GET /api/books/search?q=dune by frank herbert
 
 {
-  "query": "cyberpunk novels from the 90s",
-  "interpretation": "I searched for science fiction novels with the cyberpunk subject published in the 1990s.",
+  "query": "dune by frank herbert",
+  "interpretation": "I searched for the book Dune authored by Frank Herbert.",
   "broadened": false,
-  "count": 17,
+  "clearWinner": true,
+  "count": 1,
   "results": [
     {
-      "key": "/works/OL38501W",
-      "title": "Snow Crash",
-      "authors": ["Neal Stephenson"],
-      "firstPublishYear": 1992,
-      "coverUrl": "https://covers.openlibrary.org/b/id/392508-M.jpg",
-      "editionCount": 41,
-      "reason": "Published 1992, within 1990–1999; tagged cyberpunk, science fiction."
+      "key": "/works/OL893414W",
+      "title": "Dune",
+      "authors": ["Frank Herbert", "Френк Герберт"],
+      "firstPublishYear": 1965,
+      "coverUrl": "https://covers.openlibrary.org/b/id/11481354-M.jpg",
+      "editionCount": 160,
+      "tier": "ExactTitlePrimaryAuthor",
+      "tierLabel": "Exact match",
+      "reason": "Exact title match, by the author you named; by Frank Herbert; tagged science fiction."
     }
   ]
 }
 ```
+
+Where the answer is genuinely ambiguous you get up to five, ranked. `the hobbit by tolkien` returns
+the novel and the graphic-novel adaptation both as **Exact match**, then two **Close match** variants,
+then a **Same author** work — rather than silently picking one.
 
 ---
 
@@ -39,9 +48,11 @@ Client ──> BooksController ──> BookSearchOrchestrator
                                     │              keywords: [cyberpunk, science_fiction] }
                                     │
                                     └─2─> IBookCatalog  (OpenLibrary)
-                                            fielded query -> top 5 works
+                                            fielded query  ─┐
+                                            free-text probe ┘ concurrent
                                                   │
-                                          MatchExplainer (pure, no AI)
+                                          CandidateRanker (pure, no AI)
+                                            tier + explanation
                                                   │
                                             BookSearchResponse ──> Client
 ```
@@ -72,12 +83,49 @@ Three rules fall out of that, and they drive the implementation:
 Parsing first is also the cheaper direction: ~450 tokens in and ~80 out per query, versus shipping
 50 books of metadata into a ranking prompt on every request.
 
-### Match explanations are derived, not generated
+### Ranking
 
-There is no second AI call to explain the results. `MatchExplainer` reports which intent fields each
-book satisfied — *"Matches author Frank Herbert; published 1965, within 1960–1980."* Every clause is
-a fact about the query constraints and the returned document, so it costs nothing per result and
-cannot hallucinate. Gemini's own `interpretation` string covers how the query was read.
+Retrieval order is the catalogue's; the rank order is ours. `CandidateRanker` bands every candidate,
+strongest first:
+
+| Tier | Meaning | Badge |
+|---|---|---|
+| `ExactTitlePrimaryAuthor` | title matches and the named person wrote it | Exact match |
+| `ExactTitleContributor` | title matches, but they only narrated / illustrated / edited it | Exact title, contributor |
+| `NearTitleAuthor` | the asked-for title sits inside a longer one, author confirmed | Close match |
+| `TitleOnly` | title matches, author unconfirmed or not asked for | Title match |
+| `AuthorOnly` | no title match — these are that author's works | Same author |
+| `Discovery` | subject-led browsing; catalogue order untouched | Suggested |
+
+Exactly one candidate at the top tier sets `clearWinner` and returns that book alone. A tie there is
+ambiguity, not a winner, so the full list of five comes back — `the hobbit by tolkien` returns both
+the novel and the graphic-novel adaptation rather than silently picking one.
+
+Within a tier the catalogue's relevance survives as the tiebreak, with one adjustment: near-matches
+prefer fewer surplus title tokens, so *The Hobbit, or There and Back Again* outranks
+*The Hobbit & The Lord of the Rings [collection/set]*.
+
+**Two findings made this cheap.** The search response's `author_key` proved identical to the work
+record's `authors` on every case checked, so the primary-author list is already in hand and no
+`/works/{id}.json` fetch is needed — worth about 2.5s each, since the detail endpoints are as slow as
+search. And `contributor` is a separate field carrying roles (`Scott Brick (Narrator)`), which is
+precisely the top-two-tier discriminator.
+
+**One extra call is unavoidable.** `author=` matches only primary authors, so a contributor-only
+match cannot come back from the fielded query — `title=dune&author=scott+brick` finds none, while
+free-text `q=dune scott brick` finds three. The two queries therefore run **concurrently** and merge
+on work key; both are ~2s, so a title-plus-author search still completes in 1.2–1.4s.
+
+The probe is best-effort. It can only *add* lower-tier candidates, so if it fails the search returns
+the fielded results rather than 502. That is a deliberate exception to the no-silent-degradation rule
+below — a failure of the *primary* query still surfaces as 502.
+
+### Explanations are derived, not generated
+
+There is no second AI call. `MatchExplainer` states the tier, then which intent fields the book
+satisfied — *"Exact title match, but the person you named only contributed; credits Scott Brick as
+narrator."* Every clause is a fact about the query constraints and the returned document, so it costs
+nothing per result and cannot hallucinate. Gemini's `interpretation` covers how the query was read.
 
 ### Recovering from an over-narrow parse
 
@@ -92,6 +140,10 @@ Subjects are ANDed, so one speculative token zeroes the entire result set:
 title, then trim keywords from the tail where the model puts its guesses — stopping at the first rung
 that returns anything. No extra AI call. Capped at four rungs, since each is a real HTTP round trip.
 The `broadened` flag in the response tells the client the results are looser than what they asked for.
+
+The ladder only drops a title when *subjects* remain. When an author was named, the author fallback
+takes over instead and calls `/authors/{key}/works.json`, which answers "top works by this author"
+directly rather than approximating it with a filter.
 
 ---
 
@@ -164,9 +216,12 @@ knowing if a key ever appears not to take effect.
 
 | Status | Meaning |
 |---|---|
-| `200` | `BookSearchResponse` — up to 5 results |
+| `200` | `BookSearchResponse` — up to 5 ranked results, or exactly one when `clearWinner` is true |
 | `400` | `q` missing or blank |
 | `502` | Gemini or OpenLibrary unreachable after one retry |
+
+Each result carries `tier` (the enum name) and `tierLabel` (display text); the response carries
+`clearWinner`. See [Ranking](#ranking) for what the tiers mean.
 
 There is deliberately no `limit` parameter. The result count is a constant so that no caller-supplied
 value can escape the cache key (see below).
@@ -208,7 +263,7 @@ Failures are never stored: `ServeResponseAsync` blocks cache storage for any non
 
 ## Testing
 
-50 tests, no mocking framework, no network, no API key required. The full suite runs in ~33ms.
+102 tests, no mocking framework, no network, no API key required. The full suite runs in ~40ms.
 
 ```bash
 dotnet test
@@ -216,12 +271,26 @@ dotnet test
 
 The strategy is to test the code that holds decisions and to skip the code that only holds wiring.
 
-**Pure logic, exhaustively** — `QueryNormalizerTests`, `SubjectTokenTests`. These are table-driven
-`[Theory]` cases over the functions with real branching: term reordering, casing, diacritics,
-punctuation, stop words, duplicates, empty input. Two assertions matter most and pull in opposite
-directions — that equivalent queries *do* collapse to one fingerprint, and that genuinely different
-ones *don't* collide. A cache key that over-collapses serves the wrong results, which is far worse
-than a missed cache hit.
+**Pure logic, exhaustively** — `QueryNormalizerTests`, `SubjectTokenTests`, `TitleKeyTests`,
+`NameKeyTests`. Table-driven `[Theory]` cases over the functions with real branching: term
+reordering, casing, diacritics, punctuation, stop words, duplicates, empty input. Two assertions
+matter most and pull in opposite directions — that equivalent queries *do* collapse to one
+fingerprint, and that genuinely different ones *don't* collide. A cache key that over-collapses
+serves the wrong results, which is far worse than a missed cache hit.
+
+Two of these guard traps rather than behaviour. `TitleKeyTests` asserts that "The Book Thief" keeps
+its `book` token, because `QueryNormalizer` would strip it — the two normalizers look
+interchangeable and are not, so the test states the contrast side by side. `NameKeyTests` asserts
+that a bracketed aside which *isn't* a role — life dates, an organisation, expanded initials —
+is stripped rather than reported; treating every parenthetical as a role produced
+*"credits Tolkien, J. R. R. as john ronald reuel"* in a real search.
+
+**The ranking tiers** — `CandidateRankerTests`. This is where the requirements live, so it gets the
+most cases: primary author above contributor for the same title, exact above near, the tightest near
+match first, a tie at the top tier refusing to declare a winner, and subject-only intents leaving the
+catalogue's order alone. The fixtures are shaped from live responses — including Dune's two author
+records for one person and the Hobbit graphic novel's `["Charles Dixon", "Sean Deming",
+"J.R.R. Tolkien"]` — so they exercise the awkward data rather than an idealised version of it.
 
 **The orchestrator, against hand-written fakes** — `BookSearchOrchestratorTests`. `ISearchIntentParser`
 and `IBookCatalog` are small enough that stub classes are clearer than mock setup, and they make the
@@ -256,8 +325,10 @@ Infrastructure implements Application's abstractions, Api wires it together.
 
 ```
 LibraryApp/
-├─ Domain/            Book, SearchIntent, BookMatch
-│                     MatchExplainer, QueryNormalizer, SubjectToken   (pure, tested)
+├─ Domain/            Book, SearchIntent, BookMatch, MatchTier
+│                     CandidateRanker                                 (the tier rules)
+│                     TitleKey, NameKey, QueryNormalizer, SubjectToken
+│                     MatchExplainer                                  (all pure, all tested)
 ├─ Application/       ISearchIntentParser, IBookCatalog
 │                     BookSearchOrchestrator                          (the pipeline)
 ├─ Infrastructure/
@@ -292,7 +363,13 @@ key, and closing that needs an explicit lock rather than just Redis.
 **On a cache hit, the `query` field echoes the wording that seeded the entry**, not what the caller
 sent — an inherent consequence of collapsing equivalent queries onto one entry. Treat it as provenance.
 
-**No paging.** Top 5, by OpenLibrary's own relevance order.
+**No paging.** Top 5, tier-ranked.
+
+**Transliterated author records aren't folded.** Dune carries both `Frank Herbert` and
+`Френк Герберт` as separate author records for the same person. `NameKey.Distinct` collapses
+punctuation and casing variants, but connecting these would mean fetching `/authors/{id}.json` for
+its `alternate_names` — a ~2.2s call per author on every result. The duplicate is left visible rather
+than paid for.
 
 **Edition and format are not supported.** They aren't in OpenLibrary's search index — that data lives
 at `/works/{id}/editions.json`, and honoring them would mean N extra round trips per search. The

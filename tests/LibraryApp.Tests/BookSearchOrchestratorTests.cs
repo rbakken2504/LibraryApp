@@ -50,16 +50,18 @@ public class BookSearchOrchestratorTests
     }
 
     [Fact]
-    public async Task Drops_the_title_next_when_another_signal_remains()
+    public async Task Drops_the_title_only_when_subjects_remain_to_search_on()
     {
-        var intent = IntentOf(title: "Dune", author: "Asimov");
+        // With an author named, the ladder must NOT drop the title and re-filter by author — that
+        // would pre-empt the author fallback, which answers "top works by this author" properly.
+        var intent = IntentOf(title: "Dune", author: "Asimov", keywords: ["science_fiction"]);
         var catalog = CatalogReturning([], [Foundation]);
 
         var result = await Orchestrate(intent, catalog).SearchAsync("dune by asimov", 20, default);
 
         Assert.Equal(2, catalog.Received.Count);
         Assert.Null(catalog.Received[1].Title);
-        Assert.Equal("Asimov", catalog.Received[1].Author);
+        Assert.Equal(["science_fiction"], catalog.Received[1].Keywords);
         Assert.True(result.Broadened);
         Assert.Equal("Foundation", Assert.Single(result.Matches).Book.Title);
     }
@@ -118,7 +120,58 @@ public class BookSearchOrchestratorTests
 
         await Orchestrate(intent, catalog).SearchAsync("everything at once", 20, default);
 
-        Assert.Equal(4, catalog.Received.Count);
+        // Four ladder rungs, then one author lookup for the fallback — the ladder is what is capped,
+        // and the fallback is a single bounded step after it, not another rung. The fallback's
+        // lookup is the only attempt carrying neither a title nor any subject.
+        var fallbackLookups = catalog.Received.Count(i => i.Title is null && i.Keywords.Count == 0);
+
+        Assert.Equal(1, fallbackLookups);
+        Assert.Equal(4, catalog.Received.Count - fallbackLookups);
+    }
+
+    [Fact]
+    public async Task Author_fallback_looks_up_the_authors_own_works_when_the_title_never_matches()
+    {
+        var intent = IntentOf(title: "Nonexistent", author: "Herbert");
+
+        // Ladder finds nothing; the author lookup then finds a book carrying the author's key.
+        var catalog = new AuthorFallbackCatalog(byAuthor: [Dune], works: [BookOf("Dune Messiah", "Frank Herbert")]);
+
+        var result = await Orchestrate(intent, catalog).SearchAsync("nonexistent by herbert", 5, default);
+
+        Assert.Equal("Dune Messiah", Assert.Single(result.Matches).Book.Title);
+        Assert.Equal(MatchTier.AuthorOnly, result.Matches[0].Tier);
+        Assert.True(result.Broadened);
+        Assert.Equal(Dune.AuthorKeys[0], catalog.RequestedAuthorKey);
+    }
+
+    [Fact]
+    public async Task Contributor_probe_runs_only_when_both_title_and_author_are_known()
+    {
+        var withBoth = CatalogReturning([Dune]);
+        await Orchestrate(IntentOf(title: "Dune", author: "Herbert"), withBoth)
+            .SearchAsync("dune by herbert", 5, default);
+        Assert.Equal(["Dune Herbert"], withBoth.FreeTextQueries);
+
+        // Free text over common subject words is the shape that was measured past 25s, so it must
+        // not fire for a subject-only query.
+        var subjectsOnly = CatalogReturning([Dune]);
+        await Orchestrate(IntentOf(keywords: ["cyberpunk"]), subjectsOnly)
+            .SearchAsync("cyberpunk", 5, default);
+        Assert.Empty(subjectsOnly.FreeTextQueries);
+    }
+
+    [Fact]
+    public async Task A_failing_probe_degrades_to_fielded_results_instead_of_failing_the_search()
+    {
+        // The probe can only add lower-tier candidates, so losing it must not cost the caller the
+        // results the fielded query already returned.
+        var catalog = new StubCatalog([[Dune]]) { FreeTextThrows = true };
+
+        var result = await Orchestrate(IntentOf(title: "Dune", author: "Herbert"), catalog)
+            .SearchAsync("dune by herbert", 5, default);
+
+        Assert.Equal("Dune", Assert.Single(result.Matches).Book.Title);
     }
 
     [Fact]
@@ -176,7 +229,7 @@ public class BookSearchOrchestratorTests
     private static readonly Book Foundation = BookOf("Foundation", "Isaac Asimov", 1951);
 
     private static Book BookOf(string title, string author, int? year = null) =>
-        new($"/works/{title}", title, [author], year, null, 1);
+        new($"/works/{title}", title, [author], [$"OL{title.Length}A"], [], year, null, 1);
 
     private static SearchIntent IntentOf(
         string? title = null,
@@ -207,6 +260,9 @@ public class BookSearchOrchestratorTests
     private sealed class StubCatalog(IReadOnlyList<Book>[] responses) : IBookCatalog
     {
         public List<SearchIntent> Received { get; } = [];
+        public List<string> FreeTextQueries { get; } = [];
+        public IReadOnlyList<Book> FreeTextResults { get; init; } = [];
+        public bool FreeTextThrows { get; init; }
 
         public Task<IReadOnlyList<Book>> SearchAsync(
             SearchIntent intent, int limit, CancellationToken cancellationToken)
@@ -217,12 +273,62 @@ public class BookSearchOrchestratorTests
 
             return Task.FromResult(responses[Math.Min(Received.Count - 1, responses.Length - 1)]);
         }
+
+        public Task<IReadOnlyList<Book>> SearchFreeTextAsync(
+            string query, int limit, CancellationToken cancellationToken)
+        {
+            FreeTextQueries.Add(query);
+
+            if (FreeTextThrows) throw new SearchUnavailableException("probe is down");
+
+            return Task.FromResult(FreeTextResults);
+        }
+
+        public Task<IReadOnlyList<Book>> GetWorksByAuthorAsync(
+            string authorKey, string authorName, int limit, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<Book>>([]);
+    }
+
+    /// <summary>Returns nothing for the ladder, then feeds the author-only fallback.</summary>
+    private sealed class AuthorFallbackCatalog(IReadOnlyList<Book> byAuthor, IReadOnlyList<Book> works) : IBookCatalog
+    {
+        public string? RequestedAuthorKey { get; private set; }
+
+        public Task<IReadOnlyList<Book>> SearchAsync(
+            SearchIntent intent, int limit, CancellationToken cancellationToken)
+            // The ladder always carries a title; the fallback's author lookup does not.
+            => Task.FromResult(string.IsNullOrWhiteSpace(intent.Title) ? byAuthor : []);
+
+        public Task<IReadOnlyList<Book>> SearchFreeTextAsync(
+            string query, int limit, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<Book>>([]);
+
+        public Task<IReadOnlyList<Book>> GetWorksByAuthorAsync(
+            string authorKey, string authorName, int limit, CancellationToken cancellationToken)
+        {
+            RequestedAuthorKey = authorKey;
+            return Task.FromResult(works);
+        }
     }
 
     private sealed class CancellationAwareCatalog : IBookCatalog
     {
         public Task<IReadOnlyList<Book>> SearchAsync(
             SearchIntent intent, int limit, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<IReadOnlyList<Book>>([]);
+        }
+
+        public Task<IReadOnlyList<Book>> SearchFreeTextAsync(
+            string query, int limit, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<IReadOnlyList<Book>>([]);
+        }
+
+        public Task<IReadOnlyList<Book>> GetWorksByAuthorAsync(
+            string authorKey, string authorName, int limit, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             return Task.FromResult<IReadOnlyList<Book>>([]);

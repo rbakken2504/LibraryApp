@@ -60,6 +60,12 @@
             <span class="text-slate-500">Interpreted as:</span> {{ result.interpretation }}
         </p>
 
+        <!-- One unambiguous hit: exact title by the named author, and nothing tied with it. -->
+        <div v-if="status === 'done' && result.clearWinner"
+             class="mt-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+            One clear match — exact title by the author you named.
+        </div>
+
         <!-- The search was relaxed to find anything, so results are looser than what was asked. -->
         <div v-if="status === 'done' && result.broadened"
              class="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
@@ -120,10 +126,15 @@
                     </div>
 
                     <div class="min-w-0 flex-1">
-                        <h2 class="font-medium text-white">
-                            <a :href="`https://openlibrary.org${book.key}`" target="_blank" rel="noopener noreferrer"
-                               class="hover:text-sky-400 hover:underline">{{ book.title }}</a>
-                        </h2>
+                        <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                            <h2 class="font-medium text-white">
+                                <a :href="`https://openlibrary.org${book.key}`" target="_blank" rel="noopener noreferrer"
+                                   class="hover:text-sky-400 hover:underline">{{ book.title }}</a>
+                            </h2>
+                            <span class="rounded-full px-2 py-0.5 text-[11px] font-medium" :class="tierStyle(book.tier)">
+                                {{ book.tierLabel }}
+                            </span>
+                        </div>
                         <p class="mt-0.5 text-sm text-slate-400">
                             {{ book.authors.length ? book.authors.join(', ') : 'Unknown author' }}
                             <span v-if="book.firstPublishYear"> · {{ book.firstPublishYear }}</span>
@@ -190,7 +201,19 @@
                 search();
             }
 
-            return { query, status, result, error, examples, canSearch, failedCovers, search, runExample };
+            // Colour carries the rank band at a glance: green is an exact match by the right
+            // author, amber flags that the named person only contributed, grey is everything softer.
+            const TIER_STYLES = {
+                ExactTitlePrimaryAuthor: 'bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30',
+                ExactTitleContributor:   'bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/30',
+                NearTitleAuthor:         'bg-sky-500/15 text-sky-300 ring-1 ring-sky-500/30'
+            };
+            const tierStyle = tier => TIER_STYLES[tier] || 'bg-slate-700/60 text-slate-400';
+
+            return {
+                query, status, result, error, examples, canSearch, failedCovers,
+                search, runExample, tierStyle
+            };
         }
     }).mount('#app');
 </script>

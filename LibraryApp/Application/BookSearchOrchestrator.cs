@@ -28,7 +28,7 @@ public sealed class BookSearchOrchestrator(
         if (parsed.IsEmpty)
         {
             logger.LogWarning("Intent for {Query} had no searchable fields; returning no matches", query);
-            return new BookSearchResult(parsed, Broadened: false, Matches: []);
+            return new BookSearchResult(parsed, Broadened: false, ClearWinner: false, Matches: []);
         }
 
         var ladder = BroadeningLadder(parsed).ToArray();
@@ -36,18 +36,21 @@ public sealed class BookSearchOrchestrator(
         for (var rung = 0; rung < ladder.Length; rung++)
         {
             var attempt = ladder[rung];
-            var books = await catalog.SearchAsync(attempt, limit, cancellationToken);
+            var books = await GatherCandidatesAsync(attempt, limit, cancellationToken);
 
             if (books.Count > 0)
             {
-                // Explanations use the effective intent, so a broadened search does not claim
-                // to have matched constraints it actually dropped.
-                var matches = books
-                    .Take(limit)
-                    .Select(book => new BookMatch(book, MatchExplainer.Explain(book, attempt)))
-                    .ToArray();
+                // Ranking uses the effective intent, so a broadened search does not claim to have
+                // matched constraints it actually dropped.
+                var ranked = CandidateRanker.Rank(attempt, books, limit);
 
-                return new BookSearchResult(attempt, Broadened: rung > 0, matches);
+                logger.LogInformation(
+                    "Ranked {Count} candidates, best tier {Tier}, clear winner {ClearWinner}",
+                    ranked.Matches.Count, ranked.Matches.FirstOrDefault()?.Tier, ranked.ClearWinner);
+
+                var matches = ranked.ClearWinner ? ranked.Matches.Take(1).ToArray() : ranked.Matches;
+
+                return new BookSearchResult(attempt, rung > 0, ranked.ClearWinner, matches);
             }
 
             if (rung < ladder.Length - 1)
@@ -56,9 +59,98 @@ public sealed class BookSearchOrchestrator(
             }
         }
 
+        // Nothing matched the title. If an author was named, fall back to that author's own works
+        // rather than giving up — requirement (d).
+        var authorFallback = await AuthorFallbackAsync(parsed, limit, cancellationToken);
+        if (authorFallback.Count > 0)
+        {
+            var ranked = CandidateRanker.Rank(parsed with { Title = null }, authorFallback, limit);
+            return new BookSearchResult(parsed, Broadened: true, ClearWinner: false, ranked.Matches);
+        }
+
         logger.LogInformation("No results for {Query} after {Attempts} attempt(s)", query, ladder.Length);
 
-        return new BookSearchResult(parsed, Broadened: ladder.Length > 1, Matches: []);
+        return new BookSearchResult(parsed, ladder.Length > 1, ClearWinner: false, Matches: []);
+    }
+
+    /// <summary>
+    /// Retrieves candidates for one intent, adding a free-text probe when both a title and an author
+    /// were named.
+    /// </summary>
+    /// <remarks>
+    /// The probe exists because <c>author=</c> only matches primary authors, so a work the named
+    /// person merely narrated or illustrated cannot come back from the fielded query — that is the
+    /// entire contributor tier. The two run concurrently: each is roughly two seconds, so together
+    /// they cost about what the fielded query alone used to.
+    /// <para>
+    /// The probe is best-effort by design. It can only <em>add</em> lower-tier candidates, so losing
+    /// it degrades ranking rather than correctness, and a slow free-text query should not fail a
+    /// search the fielded path already answered. A failure of the fielded query still propagates.
+    /// </para>
+    /// </remarks>
+    private async Task<IReadOnlyList<Book>> GatherCandidatesAsync(
+        SearchIntent intent, int limit, CancellationToken cancellationToken)
+    {
+        var fielded = catalog.SearchAsync(intent, limit, cancellationToken);
+
+        if (string.IsNullOrWhiteSpace(intent.Title) || string.IsNullOrWhiteSpace(intent.Author))
+        {
+            return await fielded;
+        }
+
+        var probe = ProbeAsync($"{intent.Title} {intent.Author}", limit, cancellationToken);
+
+        await Task.WhenAll(fielded, probe);
+
+        // Fielded results first so their relevance order survives as the within-tier tiebreak.
+        return fielded.Result
+            .Concat(probe.Result)
+            .DistinctBy(book => book.Key, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private async Task<IReadOnlyList<Book>> ProbeAsync(
+        string query, int limit, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await catalog.SearchFreeTextAsync(query, limit, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Contributor probe failed for {Query}; ranking on fielded results only", query);
+            return [];
+        }
+    }
+
+    /// <summary>Requirement (d): with no title match left, return the named author's own works.</summary>
+    private async Task<IReadOnlyList<Book>> AuthorFallbackAsync(
+        SearchIntent intent, int limit, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(intent.Author)) return [];
+
+        // The author key only comes from a search hit, so find the author before listing their works.
+        var byAuthor = await catalog.SearchAsync(
+            new SearchIntent(null, intent.Author, null, null, [], intent.Interpretation),
+            limit,
+            cancellationToken);
+
+        var match = byAuthor.FirstOrDefault(b => b.AuthorKeys.Count > 0
+                                                && b.Authors.Any(a => NameKey.Matches(intent.Author, a)));
+
+        if (match is null) return byAuthor;
+
+        var index = match.Authors.ToList().FindIndex(a => NameKey.Matches(intent.Author, a));
+        var keyIndex = index >= 0 && index < match.AuthorKeys.Count ? index : 0;
+
+        logger.LogInformation("Author fallback via {AuthorKey}", match.AuthorKeys[keyIndex]);
+
+        var works = await catalog.GetWorksByAuthorAsync(
+            match.AuthorKeys[keyIndex], match.Authors[keyIndex], limit, cancellationToken);
+
+        // Keep the search hits if the works endpoint comes back empty — having already paid for
+        // them, returning nothing would be worse than returning the looser set.
+        return works.Count > 0 ? works : byAuthor;
     }
 
     /// <summary>
@@ -88,10 +180,10 @@ public sealed class BookSearchOrchestrator(
             yield return intent;
         }
 
-        // Only worth dropping the title if something else remains to search on.
-        var hasOtherSignal = !string.IsNullOrWhiteSpace(intent.Author) || intent.Keywords.Count > 0;
-
-        if (!string.IsNullOrWhiteSpace(intent.Title) && hasOtherSignal)
+        // Dropping the title only helps when subjects remain to search on. When an author was named
+        // the author fallback takes over instead — it uses the author's own works endpoint, which
+        // answers "top works by this author" directly rather than approximating it with a filter.
+        if (!string.IsNullOrWhiteSpace(intent.Title) && intent.Keywords.Count > 0)
         {
             intent = intent with { Title = null };
             yield return intent;

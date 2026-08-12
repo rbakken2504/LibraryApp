@@ -22,7 +22,9 @@ public sealed class GeminiSearchIntentParser(
 
         Fields:
           title    - only when the user named a specific work. Otherwise null.
-          author   - only when the user named a person. Otherwise null. Surname alone is fine.
+          author   - any person the user named, whatever their credit: wrote it, narrated it,
+                     illustrated it, edited it, translated it. Extract the name either way and let
+                     ranking work out how they were credited. Otherwise null. Surname alone is fine.
           yearFrom - inclusive lower bound on first publication year, else null.
           yearTo   - inclusive upper bound on first publication year, else null.
           keywords - OpenLibrary subject tokens describing theme, genre, setting or mood.
@@ -44,6 +46,8 @@ public sealed class GeminiSearchIntentParser(
         Examples:
           "dune by frank herbert"
             -> title "Dune", author "Frank Herbert", keywords [science_fiction]
+          "dune narrated by scott brick"
+            -> title "Dune", author "Scott Brick", keywords [science_fiction]
           "gritty space opera about corporate politics"
             -> title null, author null, keywords [science_fiction, space_opera]
           "cyberpunk dystopian novels from the 90s"

@@ -12,36 +12,90 @@ public sealed class OpenLibraryBookCatalog(
     HttpClient httpClient,
     ILogger<OpenLibraryBookCatalog> logger) : IBookCatalog
 {
-    /// <summary>Trimmed response payload — everything <see cref="Book"/> needs and nothing else.</summary>
-    private const string Fields = "key,title,author_name,first_publish_year,cover_i,edition_count";
+    /// <summary>
+    /// Trimmed response payload — everything <see cref="Book"/> needs and nothing else.
+    /// <c>author_key</c> and <c>contributor</c> earn their place by making the ranking tiers
+    /// decidable from this one response, with no per-work detail fetch.
+    /// </summary>
+    private const string Fields =
+        "key,title,author_name,author_key,contributor,first_publish_year,cover_i,edition_count";
 
-    public async Task<IReadOnlyList<Book>> SearchAsync(
+    public Task<IReadOnlyList<Book>> SearchAsync(
         SearchIntent intent,
+        int limit,
+        CancellationToken cancellationToken) =>
+        GetBooksAsync(BuildUrl(intent, limit), cancellationToken);
+
+    public Task<IReadOnlyList<Book>> SearchFreeTextAsync(
+        string query,
         int limit,
         CancellationToken cancellationToken)
     {
-        var url = BuildUrl(intent, limit);
+        var url = QueryHelpers.AddQueryString("/search.json", new Dictionary<string, string?>
+        {
+            ["q"] = query,
+            ["fields"] = Fields,
+            ["limit"] = limit.ToString()
+        });
 
+        return GetBooksAsync(url, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<Book>> GetWorksByAuthorAsync(
+        string authorKey,
+        string authorName,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        var url = QueryHelpers.AddQueryString(
+            $"/authors/{authorKey}/works.json",
+            new Dictionary<string, string?> { ["limit"] = limit.ToString() });
+
+        logger.LogInformation("Querying OpenLibrary author works: {Url}", url);
+
+        var payload = await GetAsync<OpenLibraryAuthorWorksResponse>(url, cancellationToken);
+
+        // This endpoint is thinner than the search index: no publish year, no edition count, and no
+        // author names. The name is supplied by the caller; the rest is genuinely absent, so those
+        // fields stay empty rather than being invented.
+        return payload.Entries
+            .Where(entry => !string.IsNullOrWhiteSpace(entry.Key))
+            .Select(entry => new Book(
+                Key: entry.Key!,
+                Title: entry.Title ?? "Untitled",
+                Authors: [authorName],
+                AuthorKeys: [authorKey],
+                Contributors: [],
+                FirstPublishYear: null,
+                CoverId: entry.Covers?.FirstOrDefault(id => id > 0),
+                EditionCount: 0))
+            .ToArray();
+    }
+
+    private async Task<IReadOnlyList<Book>> GetBooksAsync(string url, CancellationToken cancellationToken)
+    {
         logger.LogInformation("Querying OpenLibrary: {Url}", url);
 
-        OpenLibrarySearchResponse? payload;
+        var payload = await GetAsync<OpenLibrarySearchResponse>(url, cancellationToken);
+
+        logger.LogInformation("OpenLibrary returned {Returned} of {Total}", payload.Docs.Count, payload.NumFound);
+
+        return payload.Docs.Select(ToBook).ToArray();
+    }
+
+    private async Task<T> GetAsync<T>(string url, CancellationToken cancellationToken)
+    {
+        T? payload;
         try
         {
-            payload = await httpClient.GetFromJsonAsync<OpenLibrarySearchResponse>(url, cancellationToken);
+            payload = await httpClient.GetFromJsonAsync<T>(url, cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             throw new SearchUnavailableException("Could not reach the book catalog.", ex);
         }
 
-        if (payload is null)
-        {
-            throw new SearchUnavailableException("The book catalog returned an unreadable response.");
-        }
-
-        logger.LogInformation("OpenLibrary returned {Returned} of {Total}", payload.Docs.Count, payload.NumFound);
-
-        return payload.Docs.Select(ToBook).ToArray();
+        return payload ?? throw new SearchUnavailableException("The book catalog returned an unreadable response.");
     }
 
     /// <summary>
@@ -84,7 +138,11 @@ public sealed class OpenLibraryBookCatalog(
     private static Book ToBook(OpenLibraryDoc doc) => new(
         Key: doc.Key ?? string.Empty,
         Title: doc.Title ?? "Untitled",
-        Authors: doc.AuthorName ?? [],
+        // Fold duplicate records of the same person — a work can carry several author entries that
+        // are really one author under different spellings.
+        Authors: NameKey.Distinct(doc.AuthorName ?? []),
+        AuthorKeys: doc.AuthorKey ?? [],
+        Contributors: doc.Contributor ?? [],
         FirstPublishYear: doc.FirstPublishYear,
         CoverId: doc.CoverId,
         EditionCount: doc.EditionCount ?? 0);
