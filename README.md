@@ -184,12 +184,11 @@ curl "http://localhost:5014/api/books/search?q=dune by frank herbert"
 from CDN. There is no npm, no build step and no CORS configuration: the page is served from the same
 origin as the API by `UseStaticFiles`, so `dotnet run` is the only command needed.
 
-It surfaces `interpretation` and `broadened` alongside the results, since how the query was read is
-the interesting part of the response.
+It surfaces `interpretation`, `broadened` and the ranking tier alongside each result, since how the
+query was read and how strongly a book matched are the interesting parts of the response.
 
-Worth being explicit about: Tailwind's browser build compiles CSS at runtime and is officially a
-development tool. This is a demo UI, not a production asset pipeline — moving to Vite would mean
-replacing that one file and dropping two script tags.
+This is a demo UI rather than a production asset pipeline — see
+[Not built](#2-a-real-front-end-build).
 
 ### Configuration
 
@@ -312,9 +311,14 @@ mostly test their SDKs, and would make the suite slow, flaky, and dependent on a
 The honest gap is that **the Gemini prompt and its response binding have no automated coverage** —
 prompt quality isn't unit-testable, and the binding only fails against a real response shape. That
 was verified manually instead: a local stub of Gemini's OpenAI-compatible endpoint exercised the full
-pipeline against live OpenLibrary, then the real key confirmed the extractions end to end. If this
-were going further, that's the first place I'd add coverage — recorded-response contract tests over
-the adapter, not live calls.
+pipeline against live OpenLibrary, then the real key confirmed the extractions end to end. See
+[Not built](#3-an-eval-suite-for-the-gemini-prompt) for what would close it.
+
+That gap is not hypothetical. Of the three bugs found by running real queries rather than tests, two
+were in deterministic code and are now covered — reintroducing either fails the suite. The third was
+the prompt returning a null author for *"dune narrated by scott brick"*, and nothing in the suite
+would catch it coming back. The bugs in deterministic code were caught the moment tests were written
+for them; the one at the probabilistic boundary needed a live query.
 
 ---
 
@@ -349,12 +353,7 @@ OpenAI-compatible endpoint, so swapping providers doesn't touch the core.
 
 ## Known limitations
 
-**The cache is in-memory and per-process.** Lost on restart, not shared across instances, bounded at
-100 MB — so the 7-day expiry really means "7 days or until the process recycles". Fine single-instance.
-In production this would be a Redis-backed `IOutputCacheStore`, which is a DI registration only, since
-`QueryNormalizer` produces a key and knows nothing about storage. Note that a distributed store does
-*not* give you a distributed lock: N instances can still each make one upstream call for the same cold
-key, and closing that needs an explicit lock rather than just Redis.
+Limits of what *is* built. Things deliberately left out are in [Not built](#not-built-and-why) below.
 
 **The cache key is a set of tokens.** Sorting discards word order, and `Distinct()` discards frequency.
 `man bites dog` and `dog bites man` share a key. There's no stemmer either, so `cozy mystery` and
@@ -374,6 +373,72 @@ than paid for.
 **Edition and format are not supported.** They aren't in OpenLibrary's search index — that data lives
 at `/works/{id}/editions.json`, and honoring them would mean N extra round trips per search. The
 intent schema omits them rather than accepting fields it can't act on.
+
+---
+
+## Not built, and why
+
+This is an interview exercise, not a production service. The following are deliberate omissions with
+a known cost rather than things that were missed.
+
+### 1. A distributed cache, and a distributed lock with it
+
+Today the output cache is in-memory and per-process: lost on restart, bounded at 100 MB, and not
+shared between instances, so the 7-day expiry really means "7 days or until the process recycles".
+Single-instance that is fine, and it is what makes a reworded repeat search return in 8ms.
+
+In production this becomes a Redis-backed `IOutputCacheStore`. That part is a DI registration and
+nothing else, because `QueryNormalizer` produces a key and knows nothing about where it is stored.
+
+The part worth stating explicitly is that **Redis alone does not finish the job**. `AllowLocking` is
+per-process, so making the *store* distributed does not make the *lock* distributed: N instances can
+still each fire a Gemini call and an OpenLibrary round trip for the same cold key. Closing that needs
+an explicit distributed lock so the first request populates the entry and the rest wait on it. Given
+a cold search costs an AI call plus a multi-second catalogue call, that is worth doing at any real
+traffic level.
+
+### 2. A real front-end build
+
+`wwwroot/index.html` is the whole UI, with Vue and Tailwind from CDN and no npm. Tailwind's browser
+build compiles CSS at runtime and is officially a development tool, so this is a demo page rather
+than an asset pipeline.
+
+Production would be Vite with single-file components, tree-shaken CSS, and the page split into
+components instead of one template with one `setup()`. The swap is that one file plus deleting two
+script tags — the API contract does not move.
+
+### 3. An eval suite for the Gemini prompt
+
+Prompt behaviour has no automated coverage, and unit tests structurally cannot provide it. The
+concrete instance: *"dune narrated by scott brick"* returned a null author, making the contributor
+tier unreachable through natural phrasing, until the prompt was changed. No unit test would catch
+that regression — deleting the example from the prompt fails nothing.
+
+What would work is an eval: a fixed set of query → expected-intent pairs run against the live model,
+asserting on extracted fields. It belongs outside `dotnet test`, since it needs an API key, costs
+money per run, and is non-deterministic.
+
+### 4. A fallback catalogue
+
+**OpenLibrary is a single point of failure.** If it is down, every search returns 502 — there is no
+second source. It is also the slowest part of the pipeline and not consistently fast: a well-formed
+fielded query answers in ~2s, but awkward shapes were measured at 18.8s and free text over common
+words past 25s. Availability and tail latency both rest on one third party.
+
+A second provider behind the existing `IBookCatalog`, with a circuit breaker choosing between them,
+would fix that. The interface already makes the substitution clean — that boundary was drawn for
+testability and pays off here.
+
+Two things make this more than swapping an adapter, and they are the reason it is called out rather
+than quietly assumed easy:
+
+- **The ranking tiers are coupled to OpenLibrary's data model.** They depend on `author_key` matching
+  the work record's authors and on `contributor` being a separate role-carrying field. A different
+  provider will not expose the same shape, so either the tiers degrade on the fallback path or the
+  ranker needs a provider-neutral notion of "primary author" versus "contributor".
+- **Results would need reconciling.** Work identifiers differ per provider, so a cached response and
+  a live one could disagree about the same book, and `key`-based de-duplication stops working across
+  sources.
 
 ---
 
