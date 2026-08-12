@@ -94,9 +94,8 @@ var app = builder.Build();
 
 // --- Behind a TLS-terminating proxy --------------------------------------------------
 // Render (and Cloud Run, and App Service) terminate TLS at their edge and forward plain HTTP, so
-// the app sees an insecure request no matter what the browser did. Left alone, UseHttpsRedirection
-// below would 307 every request to https, the proxy would forward it as http again, and the two
-// would loop. X-Forwarded-Proto carries what the client actually used.
+// the app sees an insecure request no matter what the browser did. X-Forwarded-Proto carries what
+// the client actually used, which keeps Request.Scheme honest for logging and link generation.
 //
 // The known-proxy lists have to be cleared: the middleware trusts only loopback by default, and the
 // platform's proxy is neither loopback nor at a stable address. Safe here because the proxy is the
@@ -118,7 +117,17 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 }
 
-app.UseHttpsRedirection();
+// Redirecting to HTTPS is the hosting platform's job wherever one terminates TLS, and doing it here
+// as well actively breaks the deployment: the platform's health checks reach the container directly
+// over plain HTTP with no X-Forwarded-Proto, so this middleware answers them 307 instead of 200. The
+// instance is marked unhealthy, pulled from routing, and every request to the public URL comes back
+// as the edge's own 404. Render already redirects http to https at that edge, so nothing is lost.
+//
+// Locally, where Kestrel serves HTTPS itself and there is no edge, the redirect is worth having.
+if (!app.Configuration.GetValue<bool>("BehindTlsProxy"))
+{
+    app.UseHttpsRedirection();
+}
 
 // Serves the search UI from wwwroot. UseDefaultFiles only rewrites "/" to "/index.html" — it serves
 // nothing itself, so it has to come first. Both must precede routing, and because the page is served

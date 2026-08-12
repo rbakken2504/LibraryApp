@@ -274,24 +274,31 @@ same image run locally and on a platform that assigns ports.
 
 ### Behind a TLS-terminating proxy
 
-Managed platforms terminate TLS at the edge and forward plain HTTP, which breaks `UseHttpsRedirection`
-in a way worth understanding, because the two failure modes look nothing alike:
+Managed platforms terminate TLS at the edge and forward plain HTTP, so the app sees an insecure
+request regardless of what the browser did. Two pieces of configuration follow from that, and the
+second one was learned the hard way.
 
-- **With no HTTPS port configured**, the middleware cannot pick a redirect target. It logs
-  `Failed to determine the https port for redirect` on every request and passes them through — so
-  HTTPS is silently unenforced rather than broken. `ASPNETCORE_HTTPS_PORT=443` (singular; the plural
-  `_PORTS` tells Kestrel to *listen* on HTTPS, which needs a certificate) gives it a target.
-- **Once it has a target**, it sees an insecure request and redirects to HTTPS, the proxy forwards
-  that as HTTP again, and the two loop. `UseForwardedHeaders` reading `X-Forwarded-Proto` is what
-  makes `Request.Scheme` reflect what the client actually used, so a proxied HTTPS request is
-  recognised as already secure.
+**`UseForwardedHeaders`** reads `X-Forwarded-Proto` and `X-Forwarded-For`, which is what keeps
+`Request.Scheme` and the client IP honest for logging. The known-proxy lists are cleared because the
+middleware trusts only loopback by default and the platform's proxy is neither loopback nor at a
+stable address — safe where that proxy is the sole route to the process.
 
-Both are configured. The known-proxy lists are cleared because the middleware trusts only loopback by
-default and the platform's proxy is neither loopback nor at a stable address — safe when that proxy is
-the only route to the process.
+**`UseHttpsRedirection` is switched off in the container**, via `BehindTlsProxy=true`. Redirecting to
+HTTPS is the edge's job wherever one exists, and doing it in the app as well takes the service down:
 
-Verified against the built image: plain HTTP returns `307` to `https://…`, the same request carrying
-`X-Forwarded-Proto: https` returns `200`, and no redirect warnings remain.
+> The platform's health checks reach the container directly, over plain HTTP with no
+> `X-Forwarded-Proto`. An active redirect answers them `307` rather than `200`, so the instance is
+> marked unhealthy and pulled from routing — and every request to the public URL then returns the
+> edge's own `404`, on every path, including ones the app never had a route for. The symptom looks
+> nothing like its cause: the app is fine, and nothing is reaching it.
+
+`x-render-routing: no-server` on the 404 is the tell that the request never arrived. Note that
+leaving the middleware on but *unconfigured* hides this — with no HTTPS port it cannot pick a target,
+logs `Failed to determine the https port for redirect` per request, and passes everything through. So
+the broken configuration and the working one differ only by whether that warning appears.
+
+Verified against the built image: `/health` and `/` both return `200` over plain HTTP with no proxy
+headers, a proxied search returns `200`, and no redirect warnings remain.
 
 ### `/health`
 
