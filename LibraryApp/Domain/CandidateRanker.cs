@@ -36,37 +36,34 @@ public static class CandidateRanker
         return new RankedCandidates(ordered, ClearWinner: exactPrimary == 1);
     }
 
+    /// <summary>
+    /// How well did the title match, how well did the author match, and what does that pair mean?
+    /// </summary>
+    /// <remarks>
+    /// A missing title or author needs no special case: <see cref="TitleKey.Compare"/> and
+    /// <see cref="NameKey.Matches"/> both report no match when the reader did not ask for one, which
+    /// lands on the right tier anyway.
+    /// </remarks>
     private static MatchTier TierFor(SearchIntent intent, Book book)
     {
-        var wantsTitle = !string.IsNullOrWhiteSpace(intent.Title);
-        var wantsAuthor = !string.IsNullOrWhiteSpace(intent.Author);
+        var title = TitleKey.Compare(intent.Title, book.Title);
+        var author = AuthorMatch(intent.Author, book);
 
-        if (!wantsTitle && !wantsAuthor) return MatchTier.Discovery;
-
-        var titleMatch = wantsTitle ? TitleKey.Compare(intent.Title, book.Title) : TitleMatch.None;
-
-        // Nothing was asked about the title, so these are simply the author's works.
-        if (!wantsTitle) return AuthorMatch(intent.Author, book) is not AuthorRole.None
-            ? MatchTier.AuthorOnly
-            : MatchTier.Discovery;
-
-        // The reader named a title and this is not it. If the author still matches, it belongs with
-        // that author's other works rather than being discarded.
-        if (titleMatch is TitleMatch.None) return wantsAuthor && AuthorMatch(intent.Author, book) is not AuthorRole.None
-            ? MatchTier.AuthorOnly
-            : MatchTier.Discovery;
-
-        if (!wantsAuthor) return MatchTier.TitleOnly;
-
-        return (titleMatch, AuthorMatch(intent.Author, book)) switch
+        // Arms run strongest to weakest, matching the order MatchTier declares them in.
+        return (title, author) switch
         {
             (TitleMatch.Exact, AuthorRole.Primary)     => MatchTier.ExactTitlePrimaryAuthor,
             (TitleMatch.Exact, AuthorRole.Contributor) => MatchTier.ExactTitleContributor,
-            (TitleMatch.Near, not AuthorRole.None)     => MatchTier.NearTitleAuthor,
+            (TitleMatch.Near,  not AuthorRole.None)    => MatchTier.NearTitleAuthor,
 
-            // Title lines up but the named person is nowhere on this work — a different edition,
-            // adaptation or same-titled book. Below any corroborated match.
-            _ => MatchTier.TitleOnly
+            // Title fits, but nobody corroborates it — a different edition, an adaptation, or a
+            // book that happens to share the name.
+            (not TitleMatch.None, _)                   => MatchTier.TitleOnly,
+
+            // Wrong book, right person: keep it as one of that author's other works.
+            (_, not AuthorRole.None)                   => MatchTier.AuthorOnly,
+
+            _                                          => MatchTier.Discovery
         };
     }
 
@@ -78,7 +75,7 @@ public static class CandidateRanker
     /// </summary>
     private static AuthorRole AuthorMatch(string? wantedAuthor, Book book)
     {
-        if (book.Authors.Any(author => NameKey.Matches(wantedAuthor, author)))
+        if (book.Authors.Any(author => NameKey.Matches(wantedAuthor, author.Name)))
         {
             return AuthorRole.Primary;
         }

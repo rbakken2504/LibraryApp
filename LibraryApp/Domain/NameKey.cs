@@ -76,7 +76,8 @@ public static class NameKey
         string.Join(' ', Tokens(name).Order(StringComparer.Ordinal));
 
     /// <summary>
-    /// Collapses author records that normalize identically, preserving first-seen order.
+    /// Collapses author records that normalize identically, preserving first-seen order and each
+    /// author's own key.
     /// </summary>
     /// <remarks>
     /// This catches punctuation and casing variants ("J.R.R. Tolkien" / "J R R Tolkien") but not
@@ -84,15 +85,15 @@ public static class NameKey
     /// for the same person, and nothing short of fetching /authors/{id}.json for its alternate_names
     /// would connect them — a ~2.5s call per author, which is not worth paying on every result.
     /// </remarks>
-    public static IReadOnlyList<string> Distinct(IReadOnlyList<string> names)
+    public static IReadOnlyList<Author> Distinct(IReadOnlyList<Author> authors)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        var kept = new List<string>(names.Count);
+        var kept = new List<Author>(authors.Count);
 
-        foreach (var name in names)
+        foreach (var author in authors)
         {
-            if (string.IsNullOrWhiteSpace(name)) continue;
-            if (seen.Add(Canonical(name))) kept.Add(name.Trim());
+            if (string.IsNullOrWhiteSpace(author.Name)) continue;
+            if (seen.Add(Canonical(author.Name))) kept.Add(author with { Name = author.Name.Trim() });
         }
 
         return kept;

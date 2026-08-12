@@ -63,8 +63,7 @@ public sealed class OpenLibraryBookCatalog(
             .Select(entry => new Book(
                 Key: entry.Key!,
                 Title: entry.Title ?? "Untitled",
-                Authors: [authorName],
-                AuthorKeys: [authorKey],
+                Authors: [new Author(authorName, authorKey)],
                 Contributors: [],
                 FirstPublishYear: null,
                 CoverId: entry.Covers?.FirstOrDefault(id => id > 0),
@@ -135,15 +134,27 @@ public sealed class OpenLibraryBookCatalog(
         return QueryHelpers.AddQueryString("/search.json", parameters);
     }
 
-    private static Book ToBook(OpenLibraryDoc doc) => new(
+    internal static Book ToBook(OpenLibraryDoc doc) => new(
         Key: doc.Key ?? string.Empty,
         Title: doc.Title ?? "Untitled",
-        // Fold duplicate records of the same person — a work can carry several author entries that
-        // are really one author under different spellings.
-        Authors: NameKey.Distinct(doc.AuthorName ?? []),
-        AuthorKeys: doc.AuthorKey ?? [],
+        // Zip before folding: names and keys arrive as two arrays, and de-duplicating one without
+        // the other is exactly the misalignment the Author type exists to prevent.
+        Authors: NameKey.Distinct(PairAuthors(doc)),
         Contributors: doc.Contributor ?? [],
         FirstPublishYear: doc.FirstPublishYear,
         CoverId: doc.CoverId,
         EditionCount: doc.EditionCount ?? 0);
+
+    /// <summary>
+    /// Pairs each author name with its key. The two arrays are positional and, in practice, equal
+    /// length — but a name without a key is useless for the author lookup, so any tail beyond the
+    /// shorter array is dropped rather than paired with a placeholder.
+    /// </summary>
+    private static IReadOnlyList<Author> PairAuthors(OpenLibraryDoc doc)
+    {
+        var names = doc.AuthorName ?? [];
+        var keys = doc.AuthorKey ?? [];
+
+        return names.Zip(keys, (name, key) => new Author(name, key)).ToArray();
+    }
 }

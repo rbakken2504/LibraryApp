@@ -23,11 +23,11 @@ public static class MatchExplainer
         if (!string.IsNullOrWhiteSpace(intent.Author))
         {
             // Prefer the catalog's spelling of the author over the user's fragment.
-            var matched = book.Authors.FirstOrDefault(a => NameKey.Matches(intent.Author, a));
+            var matched = book.Authors.FirstOrDefault(a => NameKey.Matches(intent.Author, a.Name));
 
             if (matched is not null)
             {
-                clauses.Add($"by {matched}");
+                clauses.Add($"by {matched.Name}");
             }
             else if (MatchingContributor(book, intent.Author) is { } contributor)
             {
@@ -76,7 +76,7 @@ public static class MatchExplainer
         MatchTier.TitleOnly when !string.IsNullOrWhiteSpace(intent.Author)
                                           => "title matches, though not by the author you named",
         MatchTier.TitleOnly               => "title match",
-        MatchTier.AuthorOnly              => $"another work by {book.Authors.FirstOrDefault() ?? intent.Author}",
+        MatchTier.AuthorOnly              => $"another work by {book.Authors.FirstOrDefault()?.Name ?? intent.Author}",
         _                                 => null
     };
 

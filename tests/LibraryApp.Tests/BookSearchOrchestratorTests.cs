@@ -52,7 +52,7 @@ public class BookSearchOrchestratorTests
     [Fact]
     public async Task Drops_the_title_only_when_subjects_remain_to_search_on()
     {
-        // With an author named, the ladder must NOT drop the title and re-filter by author — that
+        // With an author named, Loosen must NOT drop the title and re-filter by author — that
         // would pre-empt the author fallback, which answers "top works by this author" properly.
         var intent = IntentOf(title: "Dune", author: "Asimov", keywords: ["science_fiction"]);
         var catalog = CatalogReturning([], [Foundation]);
@@ -109,7 +109,7 @@ public class BookSearchOrchestratorTests
     }
 
     [Fact]
-    public async Task Ladder_is_capped_so_a_failing_search_stays_bounded()
+    public async Task Retries_are_capped_so_a_failing_search_stays_bounded()
     {
         // Every constraint present and nothing ever matches: without a cap this would walk every
         // combination, at a multi-second catalog round trip each.
@@ -120,8 +120,8 @@ public class BookSearchOrchestratorTests
 
         await Orchestrate(intent, catalog).SearchAsync("everything at once", 20, default);
 
-        // Four ladder rungs, then one author lookup for the fallback — the ladder is what is capped,
-        // and the fallback is a single bounded step after it, not another rung. The fallback's
+        // Four search attempts, then one author lookup for the fallback — the retry loop is what is
+        // capped, and the fallback is a single bounded step after it, not another retry. The fallback's
         // lookup is the only attempt carrying neither a title nor any subject.
         var fallbackLookups = catalog.Received.Count(i => i.Title is null && i.Keywords.Count == 0);
 
@@ -134,7 +134,7 @@ public class BookSearchOrchestratorTests
     {
         var intent = IntentOf(title: "Nonexistent", author: "Herbert");
 
-        // Ladder finds nothing; the author lookup then finds a book carrying the author's key.
+        // Every retry finds nothing; the author lookup then finds a book carrying the author's key.
         var catalog = new AuthorFallbackCatalog(byAuthor: [Dune], works: [BookOf("Dune Messiah", "Frank Herbert")]);
 
         var result = await Orchestrate(intent, catalog).SearchAsync("nonexistent by herbert", 5, default);
@@ -142,7 +142,7 @@ public class BookSearchOrchestratorTests
         Assert.Equal("Dune Messiah", Assert.Single(result.Matches).Book.Title);
         Assert.Equal(MatchTier.AuthorOnly, result.Matches[0].Tier);
         Assert.True(result.Broadened);
-        Assert.Equal(Dune.AuthorKeys[0], catalog.RequestedAuthorKey);
+        Assert.Equal(Dune.Authors[0].Key, catalog.RequestedAuthorKey);
     }
 
     [Fact]
@@ -229,7 +229,7 @@ public class BookSearchOrchestratorTests
     private static readonly Book Foundation = BookOf("Foundation", "Isaac Asimov", 1951);
 
     private static Book BookOf(string title, string author, int? year = null) =>
-        new($"/works/{title}", title, [author], [$"OL{title.Length}A"], [], year, null, 1);
+        new($"/works/{title}", title, [new Author(author, $"OL{title.Length}A")], [], year, null, 1);
 
     private static SearchIntent IntentOf(
         string? title = null,
@@ -289,14 +289,14 @@ public class BookSearchOrchestratorTests
             => Task.FromResult<IReadOnlyList<Book>>([]);
     }
 
-    /// <summary>Returns nothing for the ladder, then feeds the author-only fallback.</summary>
+    /// <summary>Returns nothing for the retries, then feeds the author-only fallback.</summary>
     private sealed class AuthorFallbackCatalog(IReadOnlyList<Book> byAuthor, IReadOnlyList<Book> works) : IBookCatalog
     {
         public string? RequestedAuthorKey { get; private set; }
 
         public Task<IReadOnlyList<Book>> SearchAsync(
             SearchIntent intent, int limit, CancellationToken cancellationToken)
-            // The ladder always carries a title; the fallback's author lookup does not.
+            // Every retry still carries a title; the fallback's author lookup does not.
             => Task.FromResult(string.IsNullOrWhiteSpace(intent.Title) ? byAuthor : []);
 
         public Task<IReadOnlyList<Book>> SearchFreeTextAsync(

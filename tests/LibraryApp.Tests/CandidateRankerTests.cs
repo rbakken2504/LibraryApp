@@ -107,6 +107,16 @@ public class CandidateRankerTests
     }
 
     [Fact]
+    public void A_candidate_matching_neither_the_title_nor_the_author_falls_to_the_bottom()
+    {
+        // The catalogue returned it, but nothing about it answers what was asked. It is kept rather
+        // than dropped, so a thin result set can still be filled out.
+        var result = Rank(Intent("Nonexistent", "Nobody"), Dune);
+
+        Assert.Equal(MatchTier.Discovery, Assert.Single(result.Matches).Tier);
+    }
+
+    [Fact]
     public void Ranking_never_returns_more_than_the_limit()
     {
         var many = Enumerable.Range(0, 20).Select(i => Dune with { Key = $"/works/{i}" }).ToArray();
@@ -119,14 +129,13 @@ public class CandidateRankerTests
     /// <summary>Dune as the catalogue actually returns it — two author records for one person.</summary>
     private static readonly Book Dune = new(
         "/works/dune", "Dune",
-        Authors: ["Frank Herbert", "Френк Герберт"],
-        AuthorKeys: ["OL79034A", "OL7388009A"],
+        Authors: [new Author("Frank Herbert", "OL79034A"), new Author("Френк Герберт", "OL7388009A")],
         Contributors: ["Scott Brick (Narrator)", "John Schoenherr (Illustrator)"],
         FirstPublishYear: 1965, CoverId: 392508, EditionCount: 160);
 
     private static readonly Book DuneNarratedEdition = new(
         "/works/dune-audio", "Dune",
-        Authors: ["Some Publisher"], AuthorKeys: ["OL1X"],
+        Authors: [new Author("Some Publisher", "OL1X")],
         Contributors: ["Scott Brick (Narrator)", "Frank Herbert (Author)"],
         FirstPublishYear: 2007, CoverId: null, EditionCount: 3);
 
@@ -141,13 +150,13 @@ public class CandidateRankerTests
     /// <summary>The graphic novel: exact title, Tolkien nowhere in its author list.</summary>
     private static readonly Book HobbitAdaptation = new(
         "/works/OL219602W", "The Hobbit",
-        Authors: ["Charles Dixon", "Sean Deming"], AuthorKeys: ["OL2X", "OL3X"],
+        Authors: [new Author("Charles Dixon", "OL2X"), new Author("Sean Deming", "OL3X")],
         Contributors: [], FirstPublishYear: 1989, CoverId: null, EditionCount: 4);
 
     private static readonly Book Foundation = Work("/works/foundation", "Foundation", "Isaac Asimov");
 
     private static Book Work(string key, string title, string author) =>
-        new(key, title, [author], [$"OL{key.Length}A"], [], 1950, null, 1);
+        new(key, title, [new Author(author, $"OL{key.Length}A")], [], 1950, null, 1);
 
     private static SearchIntent Intent(string? title, string? author) =>
         new(title, author, null, null, [], "test");

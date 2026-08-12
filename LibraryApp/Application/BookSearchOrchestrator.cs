@@ -31,17 +31,21 @@ public sealed class BookSearchOrchestrator(
             return new BookSearchResult(parsed, Broadened: false, ClearWinner: false, Matches: []);
         }
 
-        var ladder = BroadeningLadder(parsed).ToArray();
+        // Search with the query as parsed. If the catalogue finds nothing, drop one constraint and
+        // search again, until it finds something or there is nothing left to drop.
+        var attempt = parsed;
+        var attempts = 0;
 
-        for (var rung = 0; rung < ladder.Length; rung++)
+        while (attempts < MaxAttempts)
         {
-            var attempt = ladder[rung];
+            attempts++;
+
             var books = await GatherCandidatesAsync(attempt, limit, cancellationToken);
 
             if (books.Count > 0)
             {
-                // Ranking uses the effective intent, so a broadened search does not claim to have
-                // matched constraints it actually dropped.
+                // Rank against the query that actually ran, so a loosened search does not claim to
+                // have matched constraints it dropped.
                 var ranked = CandidateRanker.Rank(attempt, books, limit);
 
                 logger.LogInformation(
@@ -50,17 +54,17 @@ public sealed class BookSearchOrchestrator(
 
                 var matches = ranked.ClearWinner ? ranked.Matches.Take(1).ToArray() : ranked.Matches;
 
-                return new BookSearchResult(attempt, rung > 0, ranked.ClearWinner, matches);
+                return new BookSearchResult(attempt, attempts > 1, ranked.ClearWinner, matches);
             }
 
-            if (rung < ladder.Length - 1)
-            {
-                logger.LogInformation("No results at rung {Rung}; broadening the query", rung);
-            }
+            if (Loosen(attempt) is not { } looser) break;
+
+            logger.LogInformation("Attempt {Attempt} found nothing; loosening the query", attempts);
+            attempt = looser;
         }
 
-        // Nothing matched the title. If an author was named, fall back to that author's own works
-        // rather than giving up — requirement (d).
+        // Still nothing. If an author was named, return that author's own works instead of an empty
+        // list — requirement (d).
         var authorFallback = await AuthorFallbackAsync(parsed, limit, cancellationToken);
         if (authorFallback.Count > 0)
         {
@@ -68,9 +72,9 @@ public sealed class BookSearchOrchestrator(
             return new BookSearchResult(parsed, Broadened: true, ClearWinner: false, ranked.Matches);
         }
 
-        logger.LogInformation("No results for {Query} after {Attempts} attempt(s)", query, ladder.Length);
+        logger.LogInformation("No results for {Query} after {Attempts} attempt(s)", query, attempts);
 
-        return new BookSearchResult(parsed, ladder.Length > 1, ClearWinner: false, Matches: []);
+        return new BookSearchResult(parsed, attempts > 1, ClearWinner: false, Matches: []);
     }
 
     /// <summary>
@@ -135,68 +139,53 @@ public sealed class BookSearchOrchestrator(
             limit,
             cancellationToken);
 
-        var match = byAuthor.FirstOrDefault(b => b.AuthorKeys.Count > 0
-                                                && b.Authors.Any(a => NameKey.Matches(intent.Author, a)));
+        var match = byAuthor
+            .SelectMany(book => book.Authors)
+            .FirstOrDefault(author => NameKey.Matches(intent.Author, author.Name));
 
         if (match is null) return byAuthor;
 
-        var index = match.Authors.ToList().FindIndex(a => NameKey.Matches(intent.Author, a));
-        var keyIndex = index >= 0 && index < match.AuthorKeys.Count ? index : 0;
+        logger.LogInformation("Author fallback via {AuthorKey}", match.Key);
 
-        logger.LogInformation("Author fallback via {AuthorKey}", match.AuthorKeys[keyIndex]);
-
-        var works = await catalog.GetWorksByAuthorAsync(
-            match.AuthorKeys[keyIndex], match.Authors[keyIndex], limit, cancellationToken);
+        var works = await catalog.GetWorksByAuthorAsync(match.Key, match.Name, limit, cancellationToken);
 
         // Keep the search hits if the works endpoint comes back empty — having already paid for
         // them, returning nothing would be worse than returning the looser set.
         return works.Count > 0 ? works : byAuthor;
     }
 
-    /// <summary>
-    /// Each attempt is a multi-second catalog round trip, so the ladder is capped rather than
-    /// exhaustive. Four rungs bounds a failing search at roughly ten seconds.
-    /// </summary>
+    /// <summary>Retries cost a multi-second catalog call each, so a failing search stops after four.</summary>
     private const int MaxAttempts = 4;
 
     /// <summary>
-    /// Progressively looser intents, stopping at the first that returns anything.
+    /// Returns the same query with one constraint removed, or <c>null</c> when nothing is left to
+    /// remove. Dropping the least important constraint first means the narrowest query that still
+    /// finds something is the one that wins.
     /// </summary>
-    private static IEnumerable<SearchIntent> BroadeningLadder(SearchIntent intent)
-        => Relaxations(intent).Take(MaxAttempts);
-
-    /// <summary>
-    /// Relaxations ordered from least to most likely to matter to the reader. Deterministic —
-    /// recovering from an over-narrow parse never costs another AI call.
-    /// </summary>
-    private static IEnumerable<SearchIntent> Relaxations(SearchIntent intent)
+    private static SearchIntent? Loosen(SearchIntent intent)
     {
-        yield return intent;
-
-        // Year bounds first: the most brittle thing to infer from prose ("from the 90s").
+        // Years go first: the most brittle thing to infer from prose ("from the 90s").
         if (intent.YearFrom is not null || intent.YearTo is not null)
         {
-            intent = intent with { YearFrom = null, YearTo = null };
-            yield return intent;
+            return intent with { YearFrom = null, YearTo = null };
         }
 
-        // Dropping the title only helps when subjects remain to search on. When an author was named
-        // the author fallback takes over instead — it uses the author's own works endpoint, which
-        // answers "top works by this author" directly rather than approximating it with a filter.
+        // Then the title, but only if subjects remain to search on. When an author was named the
+        // author fallback handles it instead, via that author's own works endpoint.
         if (!string.IsNullOrWhiteSpace(intent.Title) && intent.Keywords.Count > 0)
         {
-            intent = intent with { Title = null };
-            yield return intent;
+            return intent with { Title = null };
         }
 
-        // Subjects are ANDed, so a single invented token zeroes the entire result set — asking for
-        // "gritty space opera about corporate politics" yields science_fiction AND space_opera AND
-        // corporate_politics, which matches nothing, while the first two match 2,746 works. The
-        // model puts its speculative tokens last, so trim from the tail and keep at least one.
-        while (intent.Keywords.Count > 1)
+        // Then the last subject. Subjects are ANDed, so one invented token zeroes the whole result
+        // set — "gritty space opera about corporate politics" becomes science_fiction AND
+        // space_opera AND corporate_politics, matching nothing, where the first two match 2,746
+        // works. The model puts its guesses last, so the tail is what goes.
+        if (intent.Keywords.Count > 1)
         {
-            intent = intent with { Keywords = intent.Keywords.Take(intent.Keywords.Count - 1).ToArray() };
-            yield return intent;
+            return intent with { Keywords = intent.Keywords.SkipLast(1).ToArray() };
         }
+
+        return null;
     }
 }

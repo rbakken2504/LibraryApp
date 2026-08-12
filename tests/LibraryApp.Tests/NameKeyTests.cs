@@ -60,9 +60,17 @@ public class NameKeyTests
     [Fact]
     public void Distinct_folds_records_that_differ_only_in_punctuation_or_casing()
     {
-        var folded = NameKey.Distinct(["J.R.R. Tolkien", "J R R Tolkien", "j.r.r. tolkien", "Christopher Tolkien"]);
+        var folded = NameKey.Distinct([
+            new Author("J.R.R. Tolkien", "OL_A"),
+            new Author("J R R Tolkien", "OL_B"),
+            new Author("j.r.r. tolkien", "OL_C"),
+            new Author("Christopher Tolkien", "OL_D")
+        ]);
 
-        Assert.Equal(["J.R.R. Tolkien", "Christopher Tolkien"], folded);
+        Assert.Equal(["J.R.R. Tolkien", "Christopher Tolkien"], folded.Select(a => a.Name));
+
+        // Each survivor keeps its own key — folding names must never shuffle keys between people.
+        Assert.Equal(["OL_A", "OL_D"], folded.Select(a => a.Key));
     }
 
     [Fact]
@@ -71,7 +79,10 @@ public class NameKeyTests
         // Dune carries two author records for Frank Herbert, one Cyrillic. Connecting them would
         // mean fetching /authors/{id}.json for its alternate_names — a ~2.2s call per author, on
         // every result. The duplicate is left visible rather than paid for.
-        var folded = NameKey.Distinct(["Frank Herbert", "Френк Герберт"]);
+        var folded = NameKey.Distinct([
+            new Author("Frank Herbert", "OL79034A"),
+            new Author("Френк Герберт", "OL7388009A")
+        ]);
 
         Assert.Equal(2, folded.Count);
     }

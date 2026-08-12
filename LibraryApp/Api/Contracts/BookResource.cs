@@ -19,7 +19,8 @@ public sealed record BookResource(
     public static BookResource From(BookMatch match) => new(
         Key: match.Book.Key,
         Title: match.Book.Title,
-        Authors: match.Book.Authors,
+        // Keys are an internal lookup detail; callers only need the names.
+        Authors: match.Book.Authors.Select(a => a.Name).ToArray(),
         FirstPublishYear: match.Book.FirstPublishYear,
         CoverUrl: match.Book.CoverId is { } id
             ? $"https://covers.openlibrary.org/b/id/{id}-M.jpg"

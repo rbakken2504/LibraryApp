@@ -136,12 +136,12 @@ Subjects are ANDed, so one speculative token zeroes the entire result set:
 | `science_fiction AND space_opera AND corporate_politics` | **0** |
 | `science_fiction AND space_opera` | 2,746 |
 
-`BookSearchOrchestrator` walks a deterministic broadening ladder — drop the year range, then the
-title, then trim keywords from the tail where the model puts its guesses — stopping at the first rung
-that returns anything. No extra AI call. Capped at four rungs, since each is a real HTTP round trip.
+`BookSearchOrchestrator` retries with a deterministic `Loosen` step — drop the year range, then the
+title, then trim keywords from the tail where the model puts its guesses — stopping at the first
+attempt that returns anything. No extra AI call. Capped at four attempts, each a real HTTP round trip.
 The `broadened` flag in the response tells the client the results are looser than what they asked for.
 
-The ladder only drops a title when *subjects* remain. When an author was named, the author fallback
+It only drops a title when *subjects* remain. When an author was named, the author fallback
 takes over instead and calls `/authors/{key}/works.json`, which answers "top works by this author"
 directly rather than approximating it with a filter.
 
@@ -293,7 +293,7 @@ records for one person and the Hobbit graphic novel's `["Charles Dixon", "Sean D
 
 **The orchestrator, against hand-written fakes** — `BookSearchOrchestratorTests`. `ISearchIntentParser`
 and `IBookCatalog` are small enough that stub classes are clearer than mock setup, and they make the
-test read as a scenario rather than a script. Covers the broadening ladder rung by rung: year range
+test read as a scenario rather than a script. Covers the retry loop step by step: year range
 dropped first, then title, then keywords trimmed from the tail, always leaving at least one subject,
 capped at four attempts. Also that explanations describe the *effective* intent — a search broadened
 past a year filter must not claim the book matched that year — plus cancellation and error propagation.
