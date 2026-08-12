@@ -28,6 +28,47 @@ public static class NameKey
     }.ToFrozenSet(StringComparer.Ordinal);
 
     /// <summary>
+    /// Roles that describe working on someone else's book rather than writing one.
+    /// </summary>
+    /// <remarks>
+    /// These matter because OpenLibrary lists the people holding them in <c>author_name</c> beside
+    /// the actual author. The graphic-novel Hobbit (OL219602W) reports its authors as Charles Dixon,
+    /// Sean Deming and J.R.R. Tolkien, and only the <c>contributor</c> field discloses that the
+    /// first two are its adapters. Fetching the canonical work record does not help — checked, and
+    /// it lists the same three — so this field is the only place the distinction survives.
+    /// </remarks>
+    private static readonly FrozenSet<string> DerivativeRoles =
+        new[] { "adapter", "illustrator", "editor", "translator", "compiler" }.ToFrozenSet(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The derivative role <paramref name="name"/> is credited with among <paramref name="contributors"/>,
+    /// or <c>null</c> when they hold none — including when they are simply absent.
+    /// </summary>
+    public static string? DerivativeRole(IReadOnlyList<string> contributors, string? name)
+    {
+        var wanted = Canonical(name);
+        if (wanted.Length == 0) return null;
+
+        foreach (var entry in contributors)
+        {
+            var (contributor, role) = SplitRole(entry);
+
+            // Canonical equality rather than Matches: "Dixon, Charles." and "Charles Dixon" are the
+            // same person, but a bare surname matching everyone of that name is not what we want.
+            if (role is null || !string.Equals(Canonical(contributor), wanted, StringComparison.Ordinal)) continue;
+
+            // "Editor, Introduction" is one credit holding two roles; any derivative one counts.
+            var derivative = role
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .FirstOrDefault(part => DerivativeRoles.Contains(part.ToLowerInvariant()));
+
+            if (derivative is not null) return derivative;
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Splits a contributor entry into the person and, when the catalogue really gave one, the role
     /// they were credited in: "John Schoenherr (Illustrator)".
     /// </summary>

@@ -15,17 +15,20 @@ public static class MatchExplainer
     /// How the title compared, as the ranker already measured it. A <see cref="MatchTier"/> alone
     /// cannot say: <see cref="MatchTier.TitleOnly"/> covers both an exact and a near title.
     /// </param>
-    /// <param name="credit">Who matched and how, or <c>null</c> when nobody did.</param>
+    /// <param name="credits">Who is credited on the book, as the ranker worked it out.</param>
     public static string Explain(
-        Book book, SearchIntent intent, MatchTier tier, TitleMatch title, AuthorCredit? credit)
+        Book book, SearchIntent intent, MatchTier tier, TitleMatch title, BookCredits credits)
     {
-        var clauses = new List<string>(5);
+        var clauses = new List<string>(6);
+        var credit = credits.Match;
 
         // Lead with the rank band — it is the first thing a reader scanning a list of five wants.
         if (TierClause(intent, tier, credit) is { } banner) clauses.Add(banner);
 
         // AuthorOnly's banner already names the person, so a second "by X" would just repeat it.
         if (credit is not null && tier is not MatchTier.AuthorOnly) clauses.Add(CreditClause(credit));
+
+        if (AdaptationClause(credits) is { } adapted) clauses.Add(adapted);
 
         // Near implies the reader named a title: an empty ask compares as None.
         if (title is TitleMatch.Near) clauses.Add($"broader than \"{intent.Title}\"");
@@ -85,6 +88,27 @@ public static class MatchExplainer
         return credit.Role is null
             ? $"credits {credit.Name}"
             : $"credits {credit.Name} as {credit.Role.ToLowerInvariant()}";
+    }
+
+    /// <summary>
+    /// Names the people this work credits as its adapters or illustrators, which is why it sits
+    /// below an original that matched just as exactly.
+    /// </summary>
+    /// <remarks>
+    /// Anyone already named by <see cref="CreditClause"/> is left out — when the reader searched for
+    /// the adapter themselves, saying it twice adds nothing.
+    /// </remarks>
+    private static string? AdaptationClause(BookCredits credits)
+    {
+        var others = credits.Adapters
+            .Where(a => credits.Match is null
+                        || !string.Equals(NameKey.Canonical(a.Name), NameKey.Canonical(credits.Match.Name),
+                                          StringComparison.Ordinal))
+            .Take(3)
+            .Select(a => $"{a.Name} listed as {a.Role!.ToLowerInvariant()}")
+            .ToArray();
+
+        return others.Length == 0 ? null : "an adaptation: " + string.Join(", ", others);
     }
 
     private static string Humanize(string subjectToken) => subjectToken.Replace('_', ' ');

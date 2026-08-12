@@ -100,9 +100,42 @@ Exactly one candidate at the top tier sets `clearWinner` and returns that book a
 ambiguity, not a winner, so the full list of five comes back — `the hobbit by tolkien` returns both
 the novel and the graphic-novel adaptation rather than silently picking one.
 
-Within a tier the catalogue's relevance survives as the tiebreak, with one adjustment: near-matches
-prefer fewer surplus title tokens, so *The Hobbit, or There and Back Again* outranks
-*The Hobbit & The Lord of the Rings [collection/set]*.
+Within a tier the catalogue's relevance survives as the tiebreak, with two adjustments: adaptations
+sort below the originals they retell (below), and near-matches prefer fewer surplus title tokens, so
+*The Hobbit, or There and Back Again* outranks *The Hobbit & The Lord of the Rings [collection/set]*.
+
+#### De-duplicating to canonical works
+
+OpenLibrary carries more than one work id for the same book — two *Twilight* by Stephenie Meyer, two
+*Adventures of Huckleberry Finn*, two *A Tale of Two Cities*. Left alone they spend a result slot
+twice and, worse, **tie at the top tier**, so a genuine clear winner is reported as an unresolved
+choice between a book and itself. Before de-duplication `twilight meyer` returned five results and no
+winner; now it returns one.
+
+Candidates therefore collapse on normalized title plus the whole canonical author list, after
+ordering, so the surviving record is the best-ranked rather than whichever came back first. Keying on
+the *whole* author list is what keeps The Hobbit and its graphic novel apart — both share a title and
+both credit Tolkien, but the adaptation also credits its adapters, so the lists differ and the two
+stay separate, correctly, because they are different books.
+
+#### Contributors padding `author_name`
+
+OpenLibrary lists illustrators, editors and adaptors in `author_name` beside the actual author. The
+graphic-novel Hobbit (`OL219602W`) reports its authors as **Charles Dixon, Sean Deming and J.R.R.
+Tolkien**, which is enough to put it in the top tier alongside the novel itself.
+
+Only `contributor` discloses the truth — `Charles Dixon (Adapter)`, `Sean Deming (Adapter)` — and
+fetching the canonical work record does *not* help: checked against the live API, `/works/OL219602W.json`
+names the same three with `type: /type/author_role`. So the field this project already retrieves is
+the only place the distinction survives.
+
+Two consequences follow:
+
+- A work crediting its own authors with a derivative role is an adaptation, and sorts below an
+  original that matched just as exactly. The explanation says why: *"…by J.R.R. Tolkien; an
+  adaptation: Charles Dixon listed as adapter, Sean Deming listed as adapter."*
+- Searching for one of those people lands in the **contributor** tier rather than the primary-author
+  one. `the hobbit charles dixon` reports *"credits Charles Dixon as adapter"*, not that he wrote it.
 
 **Two findings made this cheap.** The search response's `author_key` proved identical to the work
 record's `authors` on every case checked, so the primary-author list is already in hand and no
