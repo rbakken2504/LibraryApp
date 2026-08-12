@@ -21,10 +21,16 @@ public sealed class GeminiSearchIntentParser(
         for the OpenLibrary catalog. Respond with JSON only.
 
         Fields:
-          title    - only when the user named a specific work. Otherwise null.
-          author   - any person the user named, whatever their credit: wrote it, narrated it,
+          title    - the work the reader means, whenever they have pointed at one. Usually that is
+                     a title they typed, but a character or a half-remembered fragment identifies a
+                     work just as precisely: "huckleberry" is Adventures of Huckleberry Finn. Null
+                     when no particular work is indicated.
+          author   - any real person the user named, whatever their credit: wrote it, narrated it,
                      illustrated it, edited it, translated it. Extract the name either way and let
-                     ranking work out how they were credited. Otherwise null. Surname alone is fine.
+                     ranking work out how they were credited. Otherwise null. Surname alone is fine,
+                     and a bare name pointing at one obvious writer resolves to them: "austen" is
+                     Jane Austen. Never put a fictional character here — they identify the work,
+                     not the person who wrote it.
           yearFrom - inclusive lower bound on first publication year, else null.
           yearTo   - inclusive upper bound on first publication year, else null.
           keywords - OpenLibrary subject tokens describing theme, genre, setting or mood.
@@ -40,14 +46,28 @@ public sealed class GeminiSearchIntentParser(
           - Give 2 to 5 keywords. They are combined with AND, so more means fewer results.
           - Drop mood words that are not real subjects (gritty, underrated, good, best).
 
-        Never invent a title or author that the request did not mention. Leave a field null
-        rather than guessing at it.
+        Ambiguous fragments matter as much as keywords. Readers often type two half-remembered
+        words rather than a title — a character, a surname, or one of each. Resolve them when they
+        point somewhere definite, and say in interpretation what you resolved:
+          - "mark huckleberry" is Mark Twain and Huckleberry Finn, not a man named Mark Huckleberry.
+          - "austen bennet" is Jane Austen and Elizabeth Bennet, so the work is Pride and Prejudice.
+        Treating a pair of fragments as one person's full name is almost always the wrong reading.
+
+        Resolving a reference is not the same as inventing one. Fill a field when the request points
+        at something recognisable, however partially, and leave it null when you would be guessing:
+        "gritty space opera" names no particular work, so its title stays null.
 
         Examples:
           "dune by frank herbert"
             -> title "Dune", author "Frank Herbert", keywords [science_fiction]
           "dune narrated by scott brick"
             -> title "Dune", author "Scott Brick", keywords [science_fiction]
+          "mark huckleberry"
+            -> title "Adventures of Huckleberry Finn", author "Mark Twain",
+               interpretation reads "mark" as Mark Twain and "huckleberry" as the character
+          "austen bennet"
+            -> title "Pride and Prejudice", author "Jane Austen",
+               interpretation reads "bennet" as Elizabeth Bennet
           "gritty space opera about corporate politics"
             -> title null, author null, keywords [science_fiction, space_opera]
           "cyberpunk dystopian novels from the 90s"

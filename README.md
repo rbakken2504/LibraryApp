@@ -126,6 +126,27 @@ satisfied — *"Exact title match, but the person you named only contributed; cr
 narrator."* Every clause is a fact about the query constraints and the returned document, so it costs
 nothing per result and cannot hallucinate. Gemini's `interpretation` covers how the query was read.
 
+### Resolving ambiguous fragments
+
+Readers often type two half-remembered words rather than a title — a character, a surname, or one of
+each. Resolving those is the parser's job, and it is the difference between an answer and nothing:
+
+| Query | Read as | Top result |
+|---|---|---|
+| `mark huckleberry` | Mark Twain + the character Huckleberry Finn | *Adventures of Huckleberry Finn* |
+| `austen bennet` | Jane Austen + the character Elizabeth Bennet | *Pride and Prejudice* |
+
+The failure mode this replaced is instructive. Read literally, `mark huckleberry` is a person called
+Mark Huckleberry, `author=` finds nobody, and the search returns zero results with an interpretation
+confidently describing the wrong search. Nothing downstream can recover from that — retrieval cannot
+find documents the query excluded.
+
+The prompt draws the line at *resolving* versus *inventing*: fill a field when the request points at
+something recognisable however partially, leave it null when that would be a guess. `gritty space
+opera` still yields no title. A fictional character never goes in `author` — they identify the work,
+not who wrote it — and `interpretation` names what was resolved, so the reader can see the leap that
+was made on their behalf.
+
 ### Recovering from an over-narrow parse
 
 Subjects are ANDed, so one speculative token zeroes the entire result set:
@@ -474,10 +495,18 @@ script tags — the API contract does not move.
 
 ### 3. An eval suite for the Gemini prompt
 
-Prompt behaviour has no automated coverage, and unit tests structurally cannot provide it. The
-concrete instance: *"dune narrated by scott brick"* returned a null author, making the contributor
-tier unreachable through natural phrasing, until the prompt was changed. No unit test would catch
-that regression — deleting the example from the prompt fails nothing.
+Prompt behaviour has no automated coverage, and unit tests structurally cannot provide it. Two
+concrete instances, both found by running real queries rather than by any test:
+
+1. *"dune narrated by scott brick"* returned a null author, making the contributor tier unreachable
+   through natural phrasing.
+2. *"mark huckleberry"* was read as a person of that name and returned nothing, until the prompt
+   learned to resolve character hints and partial names.
+
+Both were fixed in the prompt alone — no code changed — and no unit test would catch either
+regression, because deleting an example from the prompt fails nothing. That is the whole argument
+for evals: the second bug is the same shape as the first, found the same way, months of `dotnet test`
+runs later.
 
 What would work is an eval: a fixed set of query → expected-intent pairs run against the live model,
 asserting on extracted fields. It belongs outside `dotnet test`, since it needs an API key, costs

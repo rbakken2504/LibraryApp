@@ -17,6 +17,16 @@ Accept: application/json
 GET {{LibraryApp_HostAddress}}/api/books/search?q=cyberpunk novels from the 90s
 Accept: application/json
 
+### Ambiguous fragment — a surname plus a character, not a person called Mark Huckleberry.
+### Read literally this returns nothing at all; expect Adventures of Huckleberry Finn.
+GET {{LibraryApp_HostAddress}}/api/books/search?q=mark huckleberry
+Accept: application/json
+
+### Same shape, and the one that used to half-work: the character was recognised in the
+### interpretation but never reached the title, so P&P ranked only as "another Austen work".
+GET {{LibraryApp_HostAddress}}/api/books/search?q=austen bennet
+Accept: application/json
+
 ### Cache check, part 1 — expect a slow response (AI call + catalog round trip)
 GET {{LibraryApp_HostAddress}}/api/books/search?q=books by stephen king
 Accept: application/json
