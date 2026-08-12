@@ -180,6 +180,22 @@ opera` still yields no title. A fictional character never goes in `author` — t
 not who wrote it — and `interpretation` names what was resolved, so the reader can see the leap that
 was made on their behalf.
 
+Two rules keep resolution from overreaching, and both came from a real failure. `burrows mars` was
+returning **The War of the Worlds** as an exact match by H.G. Wells:
+
+- **A reading must account for every word.** Wells explains `mars` and ignores `burrows` entirely;
+  Burroughs explains both. A reading that leaves one of the reader's words unused is the wrong one,
+  however famous the book it lands on. Misspellings are expected here — `burrows` is Burroughs.
+- **When several works still fit, choose none of them.** Barsoom is eleven books, so `burrows mars`
+  now fills the author and the subject, leaves `title` null, and lets requirement (d)'s author
+  fallback return candidates — *A Princess of Mars* first. The tell that this rule was needed was in
+  the model's own output: an interpretation reading *"…Burroughs and his Barsoom series, **or** H.G.
+  Wells' Martian invasion novel"* while the response reported `clearWinner: true`. Needing "or"
+  means the field should have been null, and the prompt now says so.
+
+Being wrong here is expensive in a way an ordinary bug is not: the answer was served with maximum
+confidence and then cached under the normalized key, so every rewording of the query returned it too.
+
 ### Recovering from an over-narrow parse
 
 Subjects are ANDed, so one speculative token zeroes the entire result set:
@@ -535,11 +551,19 @@ concrete instances, both found by running real queries rather than by any test:
    through natural phrasing.
 2. *"mark huckleberry"* was read as a person of that name and returned nothing, until the prompt
    learned to resolve character hints and partial names.
+3. *"burrows mars"* returned *The War of the Worlds* as an exact match — a reading that explained
+   `mars` and ignored `burrows`, committed to with `clearWinner: true` while the interpretation
+   itself hedged with "or".
 
-Both were fixed in the prompt alone — no code changed — and no unit test would catch either
-regression, because deleting an example from the prompt fails nothing. That is the whole argument
-for evals: the second bug is the same shape as the first, found the same way, months of `dotnet test`
-runs later.
+All three were fixed in the prompt alone — no code changed — and no unit test would catch any of the
+regressions, because deleting an example from the prompt fails nothing. That is the argument for
+evals stated three times over: same shape, same discovery method, and the third one only surfaced
+because someone typed a query nobody had thought to try.
+
+The third also shows why a code-level guard is the wrong instinct. The obvious check — that a
+resolved author or title shares a token with the query — would have rejected the *correct* answer
+too, since `burrows` and `Burroughs` are different tokens. Catching it in code needs fuzzy matching,
+a whole mechanism, to avoid breaking the case it exists to fix.
 
 What would work is an eval: a fixed set of query → expected-intent pairs run against the live model,
 asserting on extracted fields. It belongs outside `dotnet test`, since it needs an API key, costs

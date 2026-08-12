@@ -27,6 +27,16 @@ Accept: application/json
 GET {{LibraryApp_HostAddress}}/api/books/search?q=austen bennet
 Accept: application/json
 
+### Ambiguous between several works, and a misspelled author. Must NOT come back as
+### The War of the Worlds: that reading explains "mars" and ignores "burrows" entirely.
+### Expect Burroughs, no title, and A Princess of Mars leading the candidates.
+GET {{LibraryApp_HostAddress}}/api/books/search?q=burrows mars
+Accept: application/json
+
+### The control for the above — Wells is still reachable when actually asked for.
+GET {{LibraryApp_HostAddress}}/api/books/search?q=wells war of the worlds
+Accept: application/json
+
 ### Cache check, part 1 — expect a slow response (AI call + catalog round trip)
 GET {{LibraryApp_HostAddress}}/api/books/search?q=books by stephen king
 Accept: application/json

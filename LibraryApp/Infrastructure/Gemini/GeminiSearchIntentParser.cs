@@ -52,6 +52,16 @@ public sealed class GeminiSearchIntentParser(
           - "mark huckleberry" is Mark Twain and Huckleberry Finn, not a man named Mark Huckleberry.
           - "austen bennet" is Jane Austen and Elizabeth Bennet, so the work is Pride and Prejudice.
         Treating a pair of fragments as one person's full name is almost always the wrong reading.
+        Names are often misspelled or half-remembered: "burrows" is Edgar Rice Burroughs.
+
+        Account for every word the reader typed. A reading that explains one word and ignores
+        another is the wrong reading, however famous the book it lands on:
+          - "burrows mars" is Burroughs and his Mars novels, giving A Princess of Mars. It is not
+            H.G. Wells and The War of the Worlds — that explains "mars" and ignores "burrows".
+
+        When more than one work still fits, do not pick one. Fill in what you are sure of, leave
+        title null, and let the ranking return candidates. Never write "or" in interpretation to
+        cover two possibilities: needing it means the field you filled should have been null.
 
         Resolving a reference is not the same as inventing one. Fill a field when the request points
         at something recognisable, however partially, and leave it null when you would be guessing:
