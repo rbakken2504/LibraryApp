@@ -205,24 +205,32 @@ Subjects are ANDed, so one speculative token zeroes the entire result set:
 | `science_fiction AND space_opera AND corporate_politics` | **0** |
 | `science_fiction AND space_opera` | 2,746 |
 
-`BookSearchOrchestrator` retries with a deterministic `Loosen` step, stopping at the first attempt
-that returns anything. No extra AI call. Capped at four attempts, each a real HTTP round trip. The
-`broadened` flag in the response tells the client the results are looser than what they asked for.
+…but that only matters for a query with nothing else to go on.
 
-**The order is the whole design: what the model inferred goes before what the reader typed.**
+**Subjects apply only when no title was named.** Where the reader identified a work, the title and
+author already *are* the query; ANDing inferred subjects onto them cannot widen the search, only
+narrow it, and the catalogue's tagging is inconsistent enough to narrow past the answer:
 
-1. The year range — the most brittle thing to infer from prose ("from the 90s").
-2. Keywords, from the tail, where the model puts its least confident guesses.
-3. The title, last, and only when a subject still survives to carry the search.
+| Query sent | Result |
+|---|---|
+| `title=2001: A Space Odyssey` | Clarke's novel, third |
+| `title=2001: A Space Odyssey` + `subject:science_fiction` | **2 results, both books *about* the film — Clarke gone** |
+| `title=…` + `subject:science_fiction AND subject:space_flight` | **0** |
 
-Sacrificing the title first — as this did originally — meant `2001 a space odyssey` spent its second
-attempt browsing `science_fiction AND space_flight AND outer_space` with no title at all, and
-answered with *Charlie and the Great Glass Elevator*. The title is the one thing the reader actually
-typed; the subjects are inferences, and it is an inference that zeroed the result set in the first
-place. Trimming them first gives the title three more attempts before it is given up on.
+Clarke's canonical record simply carries no `science_fiction` tag. Applying the model's guesses made
+the novel unfindable by its own exact title, and no amount of ranking recovers a document the query
+excluded. So a titled search now sends `title=…&author=…` and nothing else, and `2001 a space
+odyssey`, `1984` and `fahrenheit 451` each resolve on the first attempt.
 
-When an author was named the author fallback takes over instead, calling `/authors/{key}/works.json`,
-which answers "top works by this author" directly rather than approximating it with a filter.
+`Loosen` then has only two shapes, and each step changes the query rather than repeating it:
+
+- **A title was named** — drop the year range, then give up the title itself, which is what turns the
+  search into subject browsing. That is the rescue for a title matching nothing, and it is worth
+  paying only when a subject survives to carry it. Where an author was named the author fallback
+  answers better, calling `/authors/{key}/works.json` for "top works by this author" directly rather
+  than approximating it with a filter.
+- **Subject-led** — drop the year range, then trim keywords from the tail, where the model puts its
+  least confident guesses.
 
 ---
 

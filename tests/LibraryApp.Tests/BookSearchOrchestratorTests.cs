@@ -50,23 +50,23 @@ public class BookSearchOrchestratorTests
     }
 
     [Fact]
-    public async Task Guessed_subjects_are_trimmed_before_the_title_the_reader_typed()
+    public async Task A_title_search_does_not_spend_attempts_trimming_subjects_it_never_applied()
     {
-        // The title is the reader's own words; the subjects are the model's inference. Sacrificing
-        // the title first sent "2001 a space odyssey" browsing science_fiction AND space_flight AND
-        // outer_space on its second attempt, which answered Charlie and the Great Glass Elevator.
+        // A title search carries no subject filter, so trimming keywords would re-issue an
+        // identical request. Only giving up the title changes the query, and each attempt is a
+        // multi-second round trip.
         var intent = IntentOf(
             title: "2001: A Space Odyssey",
             keywords: ["science_fiction", "space_flight", "outer_space"]);
 
-        var catalog = CatalogReturning([], [], [Dune]);
+        var catalog = CatalogReturning([], [Dune]);
 
         var result = await Orchestrate(intent, catalog).SearchAsync("2001 a space odyssey", 20, default);
 
-        Assert.Equal(3, catalog.Received.Count);
-        Assert.All(catalog.Received, received => Assert.Equal("2001: A Space Odyssey", received.Title));
-        Assert.Equal(["science_fiction", "space_flight"], catalog.Received[1].Keywords);
-        Assert.Equal(["science_fiction"], catalog.Received[2].Keywords);
+        Assert.Equal(2, catalog.Received.Count);
+        Assert.Equal("2001: A Space Odyssey", catalog.Received[0].Title);
+        Assert.Null(catalog.Received[1].Title);
+        Assert.Equal(["science_fiction", "space_flight", "outer_space"], catalog.Received[1].Keywords);
         Assert.True(result.Broadened);
     }
 

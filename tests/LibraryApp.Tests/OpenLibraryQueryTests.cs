@@ -29,6 +29,31 @@ public class OpenLibraryQueryTests
         Assert.Contains("q=subject%3Acyberpunk%20AND%20subject%3Adystopia", url);
     }
 
+    [Fact]
+    public void A_named_title_is_searched_without_the_models_inferred_subjects()
+    {
+        // Subjects can only narrow a title search, and the catalogue's tagging is inconsistent
+        // enough to narrow past the answer: title=2001: A Space Odyssey returns Clarke's novel
+        // third, and adding subject:science_fiction removes it, leaving two books about the film.
+        var url = OpenLibraryBookCatalog.BuildUrl(
+            IntentOf(title: "2001: A Space Odyssey", keywords: ["science_fiction", "space_flight"]), 20);
+
+        Assert.Contains("title=2001", url);
+        Assert.DoesNotContain("subject", url);
+        Assert.DoesNotContain("q=", url);
+    }
+
+    [Fact]
+    public void A_year_range_still_applies_alongside_a_title()
+    {
+        // Years are dropped first by the loosening ladder, so applying them costs at most one retry.
+        var url = OpenLibraryBookCatalog.BuildUrl(
+            IntentOf(title: "The Hobbit", yearFrom: 1937, yearTo: 1937), 20);
+
+        Assert.Contains("title=The%20Hobbit", url);
+        Assert.Contains("first_publish_year", url);
+    }
+
     [Theory]
     [InlineData(1980, 2000, "first_publish_year%3A%5B1980%20TO%202000%5D")]
     [InlineData(1980, null, "first_publish_year%3A%5B1980%20TO%20*%5D")]

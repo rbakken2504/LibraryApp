@@ -186,23 +186,23 @@ public sealed class BookSearchOrchestrator(
             return intent with { YearFrom = null, YearTo = null };
         }
 
-        // Then the model's own guesses, from the tail. Subjects are ANDed, so one invented token
-        // zeroes the whole result set — "gritty space opera about corporate politics" becomes
-        // science_fiction AND space_opera AND corporate_politics, matching nothing, where the first
-        // two match 2,746 works. The model puts its guesses last, so the tail is what goes.
+        // With a title in hand the catalogue query carries no subjects at all, so trimming them
+        // would re-issue an identical request. Giving up the title is the only thing that changes
+        // the query — and it is what turns the search into subject browsing, the rescue for a title
+        // that matched nothing. Worth paying only when a subject survives to carry that search;
+        // where an author was named, the fallback answers better than either.
+        if (!string.IsNullOrWhiteSpace(intent.Title))
+        {
+            return intent.Keywords.Count > 0 ? intent with { Title = null } : null;
+        }
+
+        // Subject-led from here. Subjects are ANDed, so one invented token zeroes the whole result
+        // set — "gritty space opera about corporate politics" becomes science_fiction AND
+        // space_opera AND corporate_politics, matching nothing, where the first two match 2,746
+        // works. The model puts its guesses last, so the tail is what goes.
         if (intent.Keywords.Count > 1)
         {
             return intent with { Keywords = intent.Keywords.SkipLast(1).ToArray() };
-        }
-
-        // The title goes last of all, because the reader typed it and inferred nothing. Dropping it
-        // ahead of the guesses meant "2001 a space odyssey" spent its second attempt browsing
-        // science_fiction AND space_flight AND outer_space, and answered with Charlie and the Great
-        // Glass Elevator. Even then it only goes when a subject survives to carry the search, and
-        // when an author was named the fallback does better than either.
-        if (!string.IsNullOrWhiteSpace(intent.Title) && intent.Keywords.Count > 0)
-        {
-            return intent with { Title = null };
         }
 
         return null;

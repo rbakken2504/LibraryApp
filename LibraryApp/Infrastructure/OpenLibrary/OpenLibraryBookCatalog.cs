@@ -128,9 +128,19 @@ public sealed class OpenLibraryBookCatalog(
 
         var filters = new List<string>();
 
+        // Subjects only when no title was named. Where the reader identified a work, the title and
+        // author already are the query: ANDing the model's inferred subjects onto them cannot widen
+        // the search, only narrow it, and the catalogue's tagging is inconsistent enough that it
+        // narrows past the answer. Measured — `title=2001: A Space Odyssey` returns Clarke's novel
+        // third, and adding `subject:science_fiction` drops it entirely, leaving two books *about*
+        // the film, because the canonical record carries no such tag.
+        //
         // Subjects, never bare terms: OpenLibrary answers `subject:cyberpunk AND subject:dystopia`
         // promptly but times out on the same words as free text.
-        filters.AddRange(intent.Keywords.Select(keyword => $"subject:{keyword}"));
+        if (string.IsNullOrWhiteSpace(intent.Title))
+        {
+            filters.AddRange(intent.Keywords.Select(keyword => $"subject:{keyword}"));
+        }
 
         if (intent.YearFrom is not null || intent.YearTo is not null)
         {
