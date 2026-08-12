@@ -31,7 +31,9 @@
             </p>
         </header>
 
-        <form @submit.prevent="search" class="flex gap-2">
+        <!-- Stacked below sm: at 320px a side-by-side button leaves the input ~167px, about twenty
+             characters, which is not enough for a UI built around typing a sentence. -->
+        <form @submit.prevent="search" class="flex flex-col gap-2 sm:flex-row">
             <label for="q" class="sr-only">Search query</label>
             <input
                 id="q"
