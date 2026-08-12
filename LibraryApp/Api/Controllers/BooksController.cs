@@ -14,7 +14,7 @@ public class BooksController(BookSearchOrchestrator orchestrator) : ControllerBa
     /// normalized query, so a caller-supplied limit would let two different-sized requests collide
     /// on one cache entry.
     /// </summary>
-    private const int ResultLimit = 20;
+    private const int ResultLimit = 5;
 
     [HttpGet("search")]
     [OutputCache(PolicyName = "BookSearchCache")]

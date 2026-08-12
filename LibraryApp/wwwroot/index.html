@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>LibraryApp — Book Search</title>
+
+    <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
+    <script src="https://unpkg.com/vue@3.5.41/dist/vue.global.prod.js"></script>
+
+    <style>
+        /* Vue's in-DOM template is visible as raw {{ }} until mount. */
+        [v-cloak] { display: none; }
+
+        /* Tailwind's browser build compiles at runtime, so the first paint would otherwise
+           be unstyled white. These few rules cover the gap. */
+        html { background-color: #0f172a; }
+        body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+    </style>
+</head>
+<body class="h-full bg-slate-900 text-slate-100">
+
+<div id="app" v-cloak class="min-h-full">
+    <div class="mx-auto max-w-3xl px-4 py-10 sm:py-16">
+
+        <header class="mb-8">
+            <h1 class="text-3xl font-semibold tracking-tight text-white">Book Search</h1>
+            <p class="mt-2 text-sm text-slate-400">
+                Describe what you're after in plain language — the query is interpreted before the
+                catalogue is searched.
+            </p>
+        </header>
+
+        <form @submit.prevent="search" class="flex gap-2">
+            <label for="q" class="sr-only">Search query</label>
+            <input
+                id="q"
+                v-model="query"
+                type="text"
+                autocomplete="off"
+                placeholder="gritty space opera about corporate politics"
+                class="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-800 px-4 py-2.5
+                       text-slate-100 placeholder:text-slate-500 focus:border-sky-500
+                       focus:outline-none focus:ring-1 focus:ring-sky-500">
+            <button
+                type="submit"
+                :disabled="!canSearch"
+                class="shrink-0 rounded-lg bg-sky-600 px-5 py-2.5 font-medium text-white
+                       transition hover:bg-sky-500 focus:outline-none focus:ring-2
+                       focus:ring-sky-400 focus:ring-offset-2 focus:ring-offset-slate-900
+                       disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-500">
+                {{ status === 'loading' ? 'Searching…' : 'Search' }}
+            </button>
+        </form>
+
+        <!-- How the query was read. The distinctive part of this API, so it gets prominence. -->
+        <p v-if="status === 'done' && result.interpretation" class="mt-4 text-sm text-slate-400">
+            <span class="text-slate-500">Interpreted as:</span> {{ result.interpretation }}
+        </p>
+
+        <!-- The search was relaxed to find anything, so results are looser than what was asked. -->
+        <div v-if="status === 'done' && result.broadened"
+             class="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+            Nothing matched exactly, so the search was widened. These results are broader than your query.
+        </div>
+
+        <main class="mt-8">
+
+            <div v-if="status === 'idle'" class="text-sm text-slate-500">
+                <p class="mb-3">Try:</p>
+                <ul class="space-y-1.5">
+                    <li v-for="example in examples" :key="example">
+                        <button type="button" @click="runExample(example)"
+                                class="text-left text-sky-400 hover:text-sky-300 hover:underline">
+                            {{ example }}
+                        </button>
+                    </li>
+                </ul>
+            </div>
+
+            <div v-else-if="status === 'loading'" class="flex items-center gap-3 text-sm text-slate-400">
+                <svg class="h-5 w-5 animate-spin text-sky-500" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                    <path class="opacity-75" fill="currentColor"
+                          d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z"/>
+                </svg>
+                Interpreting your query and searching the catalogue…
+            </div>
+
+            <div v-else-if="status === 'error'"
+                 class="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                <p class="font-medium">Search failed</p>
+                <p class="mt-1 text-red-300/90">{{ error }}</p>
+            </div>
+
+            <div v-else-if="status === 'done' && result.count === 0" class="text-sm text-slate-400">
+                <p class="font-medium text-slate-300">No books matched.</p>
+                <p class="mt-1">Try describing the genre or subject rather than naming a specific title.</p>
+            </div>
+
+            <ul v-else-if="status === 'done'" class="space-y-4">
+                <li v-for="book in result.results" :key="book.key"
+                    class="flex gap-4 rounded-xl border border-slate-800 bg-slate-800/40 p-4
+                           transition hover:border-slate-700">
+
+                    <!-- coverUrl is nullable, and can 404 even when present — hence both guards. -->
+                    <img v-if="book.coverUrl && !failedCovers[book.key]"
+                         :src="book.coverUrl"
+                         :alt="`Cover of ${book.title}`"
+                         loading="lazy"
+                         @error="failedCovers[book.key] = true"
+                         class="h-32 w-22 shrink-0 rounded-md bg-slate-700 object-cover">
+                    <div v-else
+                         class="flex h-32 w-22 shrink-0 items-center justify-center rounded-md
+                                bg-slate-700/50 text-[10px] uppercase tracking-wide text-slate-500"
+                         aria-hidden="true">
+                        No cover
+                    </div>
+
+                    <div class="min-w-0 flex-1">
+                        <h2 class="font-medium text-white">
+                            <a :href="`https://openlibrary.org${book.key}`" target="_blank" rel="noopener noreferrer"
+                               class="hover:text-sky-400 hover:underline">{{ book.title }}</a>
+                        </h2>
+                        <p class="mt-0.5 text-sm text-slate-400">
+                            {{ book.authors.length ? book.authors.join(', ') : 'Unknown author' }}
+                            <span v-if="book.firstPublishYear"> · {{ book.firstPublishYear }}</span>
+                        </p>
+                        <p class="mt-2 text-sm text-slate-300">{{ book.reason }}</p>
+                    </div>
+                </li>
+            </ul>
+
+        </main>
+    </div>
+</div>
+
+<script>
+    const { createApp, ref, computed } = Vue;
+
+    createApp({
+        setup() {
+            const query = ref('');
+            const status = ref('idle');          // idle | loading | done | error
+            const result = ref(null);
+            const error = ref('');
+            const failedCovers = ref({});
+
+            const examples = [
+                'gritty space opera about corporate politics',
+                'cyberpunk novels from the 90s',
+                'dune by frank herbert'
+            ];
+
+            const canSearch = computed(() => query.value.trim() !== '' && status.value !== 'loading');
+
+            async function search() {
+                if (!canSearch.value) return;
+
+                status.value = 'loading';
+                error.value = '';
+                failedCovers.value = {};
+
+                try {
+                    // Relative URL so this works under both the http and https launch profiles.
+                    const res = await fetch(`/api/books/search?q=${encodeURIComponent(query.value.trim())}`);
+
+                    if (!res.ok) {
+                        // The API returns ProblemDetails for both 400 and 502.
+                        const problem = await res.json().catch(() => null);
+                        error.value = problem?.detail
+                            || problem?.title
+                            || `The server responded with ${res.status}.`;
+                        status.value = 'error';
+                        return;
+                    }
+
+                    result.value = await res.json();
+                    status.value = 'done';
+                } catch {
+                    error.value = 'Could not reach the server. Check that the app is still running.';
+                    status.value = 'error';
+                }
+            }
+
+            function runExample(example) {
+                query.value = example;
+                search();
+            }
+
+            return { query, status, result, error, examples, canSearch, failedCovers, search, runExample };
+        }
+    }).mount('#app');
+</script>
+
+</body>
+</html>

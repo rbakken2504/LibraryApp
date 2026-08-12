@@ -98,6 +98,13 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+// Serves the search UI from wwwroot. UseDefaultFiles only rewrites "/" to "/index.html" — it serves
+// nothing itself, so it has to come first. Both must precede routing, and because the page is served
+// from the same origin as the API, no CORS configuration is needed.
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 app.UseOutputCache();
 app.MapControllers();
 

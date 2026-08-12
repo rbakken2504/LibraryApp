@@ -39,7 +39,7 @@ Client ──> BooksController ──> BookSearchOrchestrator
                                     │              keywords: [cyberpunk, science_fiction] }
                                     │
                                     └─2─> IBookCatalog  (OpenLibrary)
-                                            fielded query -> top 20 works
+                                            fielded query -> top 5 works
                                                   │
                                           MatchExplainer (pure, no AI)
                                                   │
@@ -119,11 +119,25 @@ Set it with: dotnet user-secrets set "Gemini:ApiKey" "<key>"
 > ASPNETCORE_ENVIRONMENT=Development dotnet run --project LibraryApp
 > ```
 
-Then send the requests in `LibraryApp/LibraryApp.http`, or:
+Then open <http://localhost:5014> for the search page, send the requests in
+`LibraryApp/LibraryApp.http`, or:
 
 ```bash
 curl "http://localhost:5014/api/books/search?q=dune by frank herbert"
 ```
+
+### Front-end
+
+`wwwroot/index.html` is the entire UI — a search box and a result list, using Vue 3 and Tailwind 4
+from CDN. There is no npm, no build step and no CORS configuration: the page is served from the same
+origin as the API by `UseStaticFiles`, so `dotnet run` is the only command needed.
+
+It surfaces `interpretation` and `broadened` alongside the results, since how the query was read is
+the interesting part of the response.
+
+Worth being explicit about: Tailwind's browser build compiles CSS at runtime and is officially a
+development tool. This is a demo UI, not a production asset pipeline — moving to Vite would mean
+replacing that one file and dropping two script tags.
 
 ### Configuration
 
@@ -150,7 +164,7 @@ knowing if a key ever appears not to take effect.
 
 | Status | Meaning |
 |---|---|
-| `200` | `BookSearchResponse` — up to 20 results |
+| `200` | `BookSearchResponse` — up to 5 results |
 | `400` | `q` missing or blank |
 | `502` | Gemini or OpenLibrary unreachable after one retry |
 
@@ -278,7 +292,7 @@ key, and closing that needs an explicit lock rather than just Redis.
 **On a cache hit, the `query` field echoes the wording that seeded the entry**, not what the caller
 sent — an inherent consequence of collapsing equivalent queries onto one entry. Treat it as provenance.
 
-**No paging.** Top 20, by OpenLibrary's own relevance order.
+**No paging.** Top 5, by OpenLibrary's own relevance order.
 
 **Edition and format are not supported.** They aren't in OpenLibrary's search index — that data lives
 at `/works/{id}/editions.json`, and honoring them would mean N extra round trips per search. The
