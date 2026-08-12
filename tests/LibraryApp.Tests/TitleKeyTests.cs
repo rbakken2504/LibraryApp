@@ -23,14 +23,16 @@ public class TitleKeyTests
     public void Words_that_only_matter_in_a_query_are_never_stripped_from_a_title()
     {
         // QueryNormalizer drops "book", "novel", "find" and "some" because collapsing queries is
-        // the point of a cache key. Reusing it here would reduce "The Book Thief" to {thief} and
-        // match a pile of unrelated works. This test exists to keep the two apart.
+        // the point of a cache key. Reusing it here would strip the word that distinguishes
+        // "The Book Thief" and match a pile of unrelated works. This test keeps the two apart.
         Assert.Equal(["book", "thief"], TitleKey.Tokens("The Book Thief").Order());
         Assert.Equal(TitleMatch.Exact, TitleKey.Compare("The Book Thief", "the book thief").Match);
         Assert.Equal(TitleMatch.None, TitleKey.Compare("The Book Thief", "The Thief").Match);
 
-        // The contrast, made explicit.
-        Assert.Equal("thief", QueryNormalizer.Canonicalize("The Book Thief"));
+        // The contrast, made explicit: the cache key loses "book" where the title key keeps it.
+        // It retains "the", which is what stops the key colliding with a search for "thief".
+        Assert.Equal("the thief", QueryNormalizer.Canonicalize("The Book Thief"));
+        Assert.NotEqual(QueryNormalizer.Fingerprint("The Book Thief"), QueryNormalizer.Fingerprint("thief"));
     }
 
     [Fact]

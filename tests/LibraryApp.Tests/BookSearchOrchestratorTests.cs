@@ -50,6 +50,27 @@ public class BookSearchOrchestratorTests
     }
 
     [Fact]
+    public async Task Guessed_subjects_are_trimmed_before_the_title_the_reader_typed()
+    {
+        // The title is the reader's own words; the subjects are the model's inference. Sacrificing
+        // the title first sent "2001 a space odyssey" browsing science_fiction AND space_flight AND
+        // outer_space on its second attempt, which answered Charlie and the Great Glass Elevator.
+        var intent = IntentOf(
+            title: "2001: A Space Odyssey",
+            keywords: ["science_fiction", "space_flight", "outer_space"]);
+
+        var catalog = CatalogReturning([], [], [Dune]);
+
+        var result = await Orchestrate(intent, catalog).SearchAsync("2001 a space odyssey", 20, default);
+
+        Assert.Equal(3, catalog.Received.Count);
+        Assert.All(catalog.Received, received => Assert.Equal("2001: A Space Odyssey", received.Title));
+        Assert.Equal(["science_fiction", "space_flight"], catalog.Received[1].Keywords);
+        Assert.Equal(["science_fiction"], catalog.Received[2].Keywords);
+        Assert.True(result.Broadened);
+    }
+
+    [Fact]
     public async Task Drops_the_title_only_when_subjects_remain_to_search_on()
     {
         // With an author named, Loosen must NOT drop the title and re-filter by author — that

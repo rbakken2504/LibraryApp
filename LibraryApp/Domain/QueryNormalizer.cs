@@ -20,11 +20,27 @@ namespace LibraryApp.Domain;
 /// </remarks>
 public static class QueryNormalizer
 {
+    /// <summary>
+    /// Scaffolding a reader wraps around a request — never the words that distinguish one book from
+    /// another.
+    /// </summary>
+    /// <remarks>
+    /// Articles, prepositions and conjunctions are deliberately absent, and the omission is the
+    /// whole point. Dropping them merges titles that differ only by one: <c>the road</c> and
+    /// <c>on the road</c> both reduced to <c>{road}</c>, so a search for McCarthy returned Kerouac
+    /// from the cache in 75ms — with whichever query arrived first owning the entry for a week.
+    /// The same collapse put <c>the book thief</c> and <c>thief</c> on one key.
+    /// <para>
+    /// This is the hazard <see cref="TitleKey"/> already refuses to inherit; the cache had it too.
+    /// The cost of keeping them is a narrower notion of "same query" — <c>The Expanse</c> and
+    /// <c>expanse</c> no longer share an entry — which buys a slower miss, where the collision
+    /// bought a wrong book.
+    /// </para>
+    /// </remarks>
     private static readonly FrozenSet<string> StopWords = new[]
     {
-        "a", "an", "the", "by", "of", "like", "about", "for", "in", "on", "and", "or",
-        "book", "books", "novel", "novels", "find", "me", "some", "with", "that",
-        "is", "are", "any", "please", "i", "want", "looking"
+        "book", "books", "novel", "novels", "find", "me", "some", "any", "please",
+        "i", "want", "looking", "by", "about", "like", "that", "is", "are"
     }.ToFrozenSet(StringComparer.Ordinal);
 
     /// <summary>

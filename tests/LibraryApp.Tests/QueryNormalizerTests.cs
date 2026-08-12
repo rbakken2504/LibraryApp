@@ -25,8 +25,8 @@ public class QueryNormalizerTests
 
     [Theory]
     [InlineData("Books by Stephen King", "KING, Stephen books!")]
+    [InlineData("Books by Stephen King", "  stephen   king  ")]
     [InlineData("cyberpunk dystopia", "dystopia, cyberpunk")]
-    [InlineData("The Expanse", "expanse")]
     public void Queries_that_mean_the_same_thing_share_a_fingerprint(string first, string second)
         => Assert.Equal(QueryNormalizer.Fingerprint(first), QueryNormalizer.Fingerprint(second));
 
@@ -34,6 +34,15 @@ public class QueryNormalizerTests
     [InlineData("stephen king", "ursula le guin")]
     [InlineData("cyberpunk novels", "cozy mystery novels")]
     [InlineData("dune", "dune messiah")]
+
+    // Titles differing only by an article or preposition are different books, and the cache key has
+    // to say so. On the Road is Kerouac; The Road is McCarthy. Dropping those words merged the two,
+    // and the second reader to ask got the first reader's book back in 75ms.
+    [InlineData("on the road", "the road")]
+    [InlineData("the road", "road")]
+    [InlineData("the book thief", "thief")]
+    [InlineData("of mice and men", "mice men")]
+    [InlineData("gone with the wind", "gone wind")]
     public void Genuinely_different_queries_do_not_collide(string first, string second)
         => Assert.NotEqual(QueryNormalizer.Fingerprint(first), QueryNormalizer.Fingerprint(second));
 
@@ -41,8 +50,8 @@ public class QueryNormalizerTests
     public void A_query_of_nothing_but_stop_words_keeps_its_tokens()
     {
         // Otherwise every such query would canonicalize to "" and share one cache entry.
-        Assert.Equal("book the", QueryNormalizer.Canonicalize("the book"));
-        Assert.NotEqual(QueryNormalizer.Fingerprint("the book"), QueryNormalizer.Fingerprint("the novel"));
+        Assert.Equal("books find", QueryNormalizer.Canonicalize("find books"));
+        Assert.NotEqual(QueryNormalizer.Fingerprint("find books"), QueryNormalizer.Fingerprint("i want"));
     }
 
     [Fact]

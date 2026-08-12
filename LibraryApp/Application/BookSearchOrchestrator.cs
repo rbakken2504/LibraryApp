@@ -186,20 +186,23 @@ public sealed class BookSearchOrchestrator(
             return intent with { YearFrom = null, YearTo = null };
         }
 
-        // Then the title, but only if subjects remain to search on. When an author was named the
-        // author fallback handles it instead, via that author's own works endpoint.
-        if (!string.IsNullOrWhiteSpace(intent.Title) && intent.Keywords.Count > 0)
-        {
-            return intent with { Title = null };
-        }
-
-        // Then the last subject. Subjects are ANDed, so one invented token zeroes the whole result
-        // set — "gritty space opera about corporate politics" becomes science_fiction AND
-        // space_opera AND corporate_politics, matching nothing, where the first two match 2,746
-        // works. The model puts its guesses last, so the tail is what goes.
+        // Then the model's own guesses, from the tail. Subjects are ANDed, so one invented token
+        // zeroes the whole result set — "gritty space opera about corporate politics" becomes
+        // science_fiction AND space_opera AND corporate_politics, matching nothing, where the first
+        // two match 2,746 works. The model puts its guesses last, so the tail is what goes.
         if (intent.Keywords.Count > 1)
         {
             return intent with { Keywords = intent.Keywords.SkipLast(1).ToArray() };
+        }
+
+        // The title goes last of all, because the reader typed it and inferred nothing. Dropping it
+        // ahead of the guesses meant "2001 a space odyssey" spent its second attempt browsing
+        // science_fiction AND space_flight AND outer_space, and answered with Charlie and the Great
+        // Glass Elevator. Even then it only goes when a subject survives to carry the search, and
+        // when an author was named the fallback does better than either.
+        if (!string.IsNullOrWhiteSpace(intent.Title) && intent.Keywords.Count > 0)
+        {
+            return intent with { Title = null };
         }
 
         return null;

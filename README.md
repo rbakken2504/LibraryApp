@@ -205,14 +205,24 @@ Subjects are ANDed, so one speculative token zeroes the entire result set:
 | `science_fiction AND space_opera AND corporate_politics` | **0** |
 | `science_fiction AND space_opera` | 2,746 |
 
-`BookSearchOrchestrator` retries with a deterministic `Loosen` step — drop the year range, then the
-title, then trim keywords from the tail where the model puts its guesses — stopping at the first
-attempt that returns anything. No extra AI call. Capped at four attempts, each a real HTTP round trip.
-The `broadened` flag in the response tells the client the results are looser than what they asked for.
+`BookSearchOrchestrator` retries with a deterministic `Loosen` step, stopping at the first attempt
+that returns anything. No extra AI call. Capped at four attempts, each a real HTTP round trip. The
+`broadened` flag in the response tells the client the results are looser than what they asked for.
 
-It only drops a title when *subjects* remain. When an author was named, the author fallback
-takes over instead and calls `/authors/{key}/works.json`, which answers "top works by this author"
-directly rather than approximating it with a filter.
+**The order is the whole design: what the model inferred goes before what the reader typed.**
+
+1. The year range — the most brittle thing to infer from prose ("from the 90s").
+2. Keywords, from the tail, where the model puts its least confident guesses.
+3. The title, last, and only when a subject still survives to carry the search.
+
+Sacrificing the title first — as this did originally — meant `2001 a space odyssey` spent its second
+attempt browsing `science_fiction AND space_flight AND outer_space` with no title at all, and
+answered with *Charlie and the Great Glass Elevator*. The title is the one thing the reader actually
+typed; the subjects are inferences, and it is an inference that zeroed the result set in the first
+place. Trimming them first gives the title three more attempts before it is given up on.
+
+When an author was named the author fallback takes over instead, calling `/authors/{key}/works.json`,
+which answers "top works by this author" directly rather than approximating it with a filter.
 
 ---
 
@@ -309,10 +319,18 @@ share a single entry:
 ```
 "The BOOKS by Émile Zola!"
   → lowercase, strip diacritics, drop punctuation
-  → tokenize, remove stop words          [emile, zola]
-  → Distinct(), sort ordinal             [emile, zola]
+  → tokenize                             [the, books, by, emile, zola]
+  → remove request scaffolding           [the, emile, zola]
+  → Distinct(), sort ordinal             [emile, the, zola]
   → SHA-256 → base64url                  cache key
 ```
+
+Only *scaffolding* is removed — `book`, `novel`, `by`, `find me`, `please`, `looking for`. Articles,
+prepositions and conjunctions stay, and that restraint is load-bearing: dropping them collapsed
+`the road` and `on the road` onto one key, so a search for McCarthy returned Kerouac out of the cache
+in 75ms, with whichever query arrived first owning the entry for a week. `the book thief` and `thief`
+went the same way. It is the hazard [`TitleKey`](#ranking) already refuses to inherit — the cache had
+it too. Keeping those words costs a narrower notion of "same query" and buys correct answers.
 
 Measured: `books by stephen king` 1.0s cold, `KING, Stephen books!` **8ms** warm, with no upstream
 call for the second. Since `AllowLocking` is on, concurrent requests for one key wait for the first
