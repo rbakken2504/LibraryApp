@@ -259,6 +259,65 @@ Failures are never stored: `ServeResponseAsync` blocks cache storage for any non
 
 ---
 
+## Deployment
+
+Containerised, because .NET 10 is new enough that buildpack support is the least predictable part of
+any host. `mcr.microsoft.com/dotnet/aspnet:10.0` is the only runtime dependency.
+
+```bash
+docker build -t libraryapp .
+docker run -p 8080:8080 -e Gemini__ApiKey="<key>" libraryapp
+```
+
+The image binds to `$PORT` when the host injects one and falls back to 8080, which is what lets the
+same image run locally and on a platform that assigns ports.
+
+### Behind a TLS-terminating proxy
+
+Managed platforms terminate TLS at the edge and forward plain HTTP, which breaks `UseHttpsRedirection`
+in a way worth understanding, because the two failure modes look nothing alike:
+
+- **With no HTTPS port configured**, the middleware cannot pick a redirect target. It logs
+  `Failed to determine the https port for redirect` on every request and passes them through — so
+  HTTPS is silently unenforced rather than broken. `ASPNETCORE_HTTPS_PORT=443` (singular; the plural
+  `_PORTS` tells Kestrel to *listen* on HTTPS, which needs a certificate) gives it a target.
+- **Once it has a target**, it sees an insecure request and redirects to HTTPS, the proxy forwards
+  that as HTTP again, and the two loop. `UseForwardedHeaders` reading `X-Forwarded-Proto` is what
+  makes `Request.Scheme` reflect what the client actually used, so a proxied HTTPS request is
+  recognised as already secure.
+
+Both are configured. The known-proxy lists are cleared because the middleware trusts only loopback by
+default and the platform's proxy is neither loopback nor at a stable address — safe when that proxy is
+the only route to the process.
+
+Verified against the built image: plain HTTP returns `307` to `https://…`, the same request carrying
+`X-Forwarded-Proto: https` returns `200`, and no redirect warnings remain.
+
+### `/health`
+
+Liveness only, and deliberately shallow. It is the endpoint a platform polls, so it must not touch
+Gemini or OpenLibrary — a check that verified them would bill an AI call on every ping, and output
+caching does not sit in front of this route. That the Gemini key exists is already settled at startup
+by `ValidateOnStart`, which fails the container rather than letting it serve without one.
+
+### What free tiers do to the cache
+
+The cache is per-process (see [Caching](#caching)), so it lives and dies with the container. Any host
+that scales to zero — Render's free tier spins down after 15 minutes idle, Cloud Run likewise —
+empties it on every cold start, which caps the 7-day expiry at the container's lifetime rather than
+seven days.
+
+This does not break a demonstration. Within a warm window the cache behaves exactly as described
+above, and the cleanest proof it is a real hit is the log: `UseOutputCache` runs before
+`MapControllers`, so a hit short-circuits the pipeline and the orchestrator never logs its
+`Parsed {Query} …` line. A miss logs a paragraph; a hit logs nothing.
+
+Render's free tier allows 750 instance-hours per calendar month shared across the workspace, against
+~744 for a 31-day month — enough to keep one service continuously awake, with the caveat that
+exhausting the allowance suspends every free service until the next month.
+
+---
+
 ## Testing
 
 102 tests, no mocking framework, no network, no API key required. The full suite runs in ~40ms.

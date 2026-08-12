@@ -1,0 +1,22 @@
+# Build outputs — stale binaries copied into the build context would shadow a fresh restore and
+# can silently produce an image built from the wrong assemblies.
+**/bin/
+**/obj/
+
+# Nothing the build needs, and .git in particular is the bulk of the context.
+.git/
+.gitignore
+.idea/
+*.DotSettings.user
+README.md
+Dockerfile
+.dockerignore
+
+# Tests are not part of the runtime image; the Dockerfile never copies them, and excluding them
+# here keeps them out of the context that gets shipped to the daemon.
+tests/
+
+# Local-only configuration. Secrets live in user-secrets outside the repo, but appsettings
+# overrides and launch profiles are machine-specific and have no business in an image.
+**/appsettings.Development.json
+**/Properties/launchSettings.json

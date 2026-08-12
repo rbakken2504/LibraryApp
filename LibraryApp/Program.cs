@@ -6,6 +6,7 @@ using LibraryApp.Application;
 using LibraryApp.Application.Abstractions;
 using LibraryApp.Infrastructure.Gemini;
 using LibraryApp.Infrastructure.OpenLibrary;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using OpenAI;
@@ -16,6 +17,7 @@ builder.Services.AddControllers();
 builder.Services.AddOpenApi();
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<SearchUnavailableExceptionHandler>();
+builder.Services.AddHealthChecks();
 
 builder.Services.AddOptions<GeminiOptions>()
     .Bind(builder.Configuration.GetSection(GeminiOptions.SectionName))
@@ -90,6 +92,25 @@ builder.Services.AddScoped<BookSearchOrchestrator>();
 
 var app = builder.Build();
 
+// --- Behind a TLS-terminating proxy --------------------------------------------------
+// Render (and Cloud Run, and App Service) terminate TLS at their edge and forward plain HTTP, so
+// the app sees an insecure request no matter what the browser did. Left alone, UseHttpsRedirection
+// below would 307 every request to https, the proxy would forward it as http again, and the two
+// would loop. X-Forwarded-Proto carries what the client actually used.
+//
+// The known-proxy lists have to be cleared: the middleware trusts only loopback by default, and the
+// platform's proxy is neither loopback nor at a stable address. Safe here because the proxy is the
+// only route to this process — nothing else can reach it to spoof the header.
+var forwardedHeaders = new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedFor
+};
+
+forwardedHeaders.KnownIPNetworks.Clear();
+forwardedHeaders.KnownProxies.Clear();
+
+app.UseForwardedHeaders(forwardedHeaders);
+
 app.UseExceptionHandler();
 
 if (app.Environment.IsDevelopment())
@@ -107,5 +128,11 @@ app.UseStaticFiles();
 
 app.UseOutputCache();
 app.MapControllers();
+
+// Liveness only, and deliberately shallow: this is what the host polls, so it must not touch Gemini
+// or OpenLibrary. A check that verified them would bill an AI call every time the platform pinged
+// it, and output caching does not sit in front of this route. "The process is up" is the question
+// being asked — that the Gemini key exists was already settled at startup by ValidateOnStart.
+app.MapHealthChecks("/health");
 
 app.Run();
